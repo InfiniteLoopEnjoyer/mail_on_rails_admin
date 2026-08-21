@@ -82,10 +82,14 @@ servers:
         - "25:1025"
         - "587:1587"
         - "465:1465"
-      # Docker-level liveness: the MX port answers. Kamal has no HTTP
-      # health check for a non-proxied role; this is what `docker ps`
-      # (and the post-deploy hook) look at.
-      health-cmd: 'bash -c "exec 3<>/dev/tcp/127.0.0.1/1025"'
+      # Docker-level liveness: all three listener sockets are in LISTEN
+      # state (ports 1025/1587/1465 = 0401/0633/05B9 in /proc/net/tcp).
+      # Deliberately NOT a TCP connect: a probe that connects is a real
+      # SMTP session every 10 s - a banner, a closed-connection history
+      # row, a "127.0.0.1" entry on the /smtp page. Kamal waits for this
+      # to turn healthy before booting the next role; the post-deploy hook
+      # does the one real connect per port per deploy.
+      health-cmd: 'bash -c "[ \"$(grep -hE \"^ *[0-9]+: [0-9A-F]+:(0401|0633|05B9) [0-9A-F:]+ 0A \" /proc/net/tcp /proc/net/tcp6 | wc -l)\" -ge 3 ]"'
       health-interval: 10s
       health-timeout: 5s
       health-retries: 3
@@ -106,7 +110,9 @@ servers:
       publish:
         - "143:1143"
         - "993:1993"
-      health-cmd: 'bash -c "exec 3<>/dev/tcp/127.0.0.1/1143"'
+      # LISTEN-state check for 1143/1993 (0477/07C9), never a connect -
+      # see the smtp role.
+      health-cmd: 'bash -c "[ \"$(grep -hE \"^ *[0-9]+: [0-9A-F]+:(0477|07C9) [0-9A-F:]+ 0A \" /proc/net/tcp /proc/net/tcp6 | wc -l)\" -ge 2 ]"'
       health-interval: 10s
       health-timeout: 5s
       health-retries: 3
