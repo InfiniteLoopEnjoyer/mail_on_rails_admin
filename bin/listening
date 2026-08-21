@@ -1,0 +1,23 @@
+#!/bin/sh
+# Container health probe for the mail roles: exit 0 when every given TCP
+# port has a socket in LISTEN state (read from /proc/net/tcp and tcp6),
+# else 1. Deliberately never connects - a probe that connects is a real
+# SMTP/IMAP session every interval (a banner, a closed-connection history
+# row, a "127.0.0.1" entry on the live pages). Kamal waits for the docker
+# health status before booting the next role; the post-deploy hook does
+# the one real connect per port per deploy.
+#
+#   bin/listening 1025 1587 1465
+set -eu
+
+[ "$#" -gt 0 ] || { echo "usage: bin/listening PORT [PORT...]" >&2; exit 2; }
+
+for port in "$@"; do
+  hex=$(printf '%04X' "$port")
+  # sl local_address rem_address st ... ; st 0A = LISTEN
+  if ! grep -qE "^ *[0-9]+: [0-9A-F]+:${hex} [0-9A-F:]+ 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+    echo "port ${port} is not listening" >&2
+    exit 1
+  fi
+done
+exit 0
