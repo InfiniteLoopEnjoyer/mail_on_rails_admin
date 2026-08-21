@@ -132,6 +132,14 @@ scanning policy live in [docs/virus_scanning.md](docs/virus_scanning.md).
 The deploy is three Kamal roles from one image - web, smtp, imap - plus
 PostgreSQL, rspamd, ClamAV and certbot accessories (one all-in-one role
 is still supported; see [docs/split.md](docs/split.md)).
+**Solid Queue is required and runs on the web role**
+(`SOLID_QUEUE_IN_PUMA`, schedule in [config/recurring.yml](config/recurring.yml)):
+the smtp and imap roles only accept and serve; Action Mailbox routing of
+inbound mail, outbound delivery (every 15 s), report sending, DKIM
+rotation and all pruning are its jobs. Scale web down to zero, or deploy
+a mail role alone, and mail stops moving - a standalone mode that runs
+Solid Queue inside `bin/mail_server` is a listed follow-up in the core
+gem.
 [config/deploy.yml](config/deploy.yml) is a sanitized template — real
 deploys use a destination file (`bin/kamal deploy -d prod`). The
 extraction/deploy runbook is
