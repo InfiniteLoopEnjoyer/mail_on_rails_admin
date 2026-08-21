@@ -1,0 +1,49 @@
+# Passkey enrollment for the signed-in user (see the user edit page).
+# options issues the creation challenge; create verifies the attestation the
+# browser posts back (webauthn_controller.js) and stores the public key.
+class TwoFactor::PasskeysController < ApplicationController
+  allow_member_access
+  rate_limit to: 10, within: 3.minutes, only: %i[options create],
+             with: -> { render json: { error: "Try again later." }, status: :too_many_requests }
+  rate_limit to: 10, within: 3.minutes, only: :destroy, name: "destroy",
+             with: -> { redirect_to edit_user_path(Current.user), alert: "Try again later." }
+  # Enrolling or removing a passkey needs fresh proof of identity, not just
+  # a resumed session cookie. options/create are JSON, so the step-up gate
+  # answers them with a 403 + reauth_url the browser script follows; signing
+  # in opens the window, so setup right after login isn't re-prompted.
+  before_action :require_recent_reauthentication, only: %i[options create destroy]
+
+  def options
+    user = Current.user
+    options = WebAuthn::Credential.options_for_create(
+      user: { id: user.webauthn_handle, name: user.email_address },
+      exclude: user.webauthn_credentials.pluck(:external_id),
+      # Require the authenticator to verify the user (PIN/biometric), so a
+      # passkey proves possession AND presence, and can stand in for a
+      # password at step-up.
+      authenticator_selection: { user_verification: "required" }
+    )
+    session[:webauthn_challenge] = options.challenge
+    render json: options
+  end
+
+  def create
+    credential = WebAuthn::Credential.from_create(params.require(:credential).to_unsafe_h)
+    credential.verify(session.delete(:webauthn_challenge).to_s, user_verification: true)
+    Current.user.webauthn_credentials.create!(
+      external_id: credential.id,
+      public_key: credential.public_key,
+      sign_count: credential.sign_count,
+      nickname: params[:nickname].presence || "Passkey"
+    )
+    flash[:notice] = "Passkey registered."
+    render json: { location: edit_user_url(Current.user) }
+  rescue WebAuthn::Error, ActiveRecord::RecordInvalid, ActionController::ParameterMissing
+    render json: { error: "Passkey registration failed." }, status: :unprocessable_entity
+  end
+
+  def destroy
+    Current.user.webauthn_credentials.find(params[:id]).destroy!
+    redirect_to edit_user_path(Current.user), notice: "Passkey removed."
+  end
+end

@@ -1,0 +1,85 @@
+- page_title "Outbox"
+
+header.mb-4
+  h1.text-2xl.font-bold Outbox
+  p.mt-1.text-sm.text-slate-500.dark:text-slate-400
+    | Outbound deliveries the server still owes a remote mail server, one row per recipient. Deleting a row cancels it outright: no more retries, and no bounce back to the sender.
+
+section.mb-8
+  h2.mb-2.text-lg.font-semibold Waiting to send
+  - if @queued.any?
+    .overflow-x-auto.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+      table.w-full.text-left.text-sm
+        thead.border-b.border-slate-200.dark:border-slate-800.text-xs.text-slate-500.dark:text-slate-400
+          tr
+            th.px-4.py-2 Queued
+            th.px-4.py-2 From
+            th.px-4.py-2 To
+            th.px-4.py-2 Subject
+            th.px-4.py-2 Attempts
+            th.px-4.py-2 Next attempt
+            th.px-4.py-2 Last error
+            th.px-4.py-2
+        tbody
+          - @queued.each do |message|
+            tr.border-b.border-slate-100.dark:border-slate-800.last:border-0
+              td.px-4.py-2.whitespace-nowrap.text-slate-500.dark:text-slate-400 title=message.created_at.iso8601
+                = "#{time_ago_in_words(message.created_at)} ago"
+              td.px-4.py-2.whitespace-nowrap= message.mail_from
+              td.px-4.py-2.whitespace-nowrap= message.recipient
+              td.px-4.py-2.max-w-64.truncate title=outbox_subject(message)
+                = outbox_subject(message) || content_tag(:span, "(no subject)", class: "text-slate-400 dark:text-slate-500")
+              td.px-4.py-2.whitespace-nowrap= outbox_attempts_label(message)
+              td.px-4.py-2.whitespace-nowrap.text-slate-500.dark:text-slate-400
+                - if message.delivering?
+                  span class="rounded bg-accent/10 px-1.5 py-0.5 text-xs font-medium text-accent"
+                    | sending now
+                - elsif message.next_attempt_at.future?
+                  = "in #{distance_of_time_in_words(Time.current, message.next_attempt_at)}"
+                - else
+                  | any moment
+              td.px-4.py-2.max-w-72.truncate.text-xs.text-slate-500.dark:text-slate-400 title=message.last_error
+                = message.last_error
+              td.px-4.py-2.text-right
+                = button_to "Delete", outbox_message_path(message), method: :delete,
+                    disabled: message.delivering?,
+                    class: "inline-block cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400 disabled:cursor-not-allowed disabled:opacity-40",
+                    form: { data: { turbo_confirm: "Delete the message to #{message.recipient}? It will not be sent, retried, or bounced." }, class: "inline-block" }
+  - else
+    p.text-sm.text-slate-500.dark:text-slate-400 Nothing waiting - the queue is empty.
+
+section
+  h2.mb-2.text-lg.font-semibold Failed
+  p.mb-2.text-sm.text-slate-500.dark:text-slate-400
+    | Deliveries that hit a permanent error or ran out of retries. The sender already received a bounce; these rows are kept for diagnosis and can be deleted freely.
+  - if @failed.any?
+    .overflow-x-auto.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+      table.w-full.text-left.text-sm
+        thead.border-b.border-slate-200.dark:border-slate-800.text-xs.text-slate-500.dark:text-slate-400
+          tr
+            th.px-4.py-2 Failed
+            th.px-4.py-2 From
+            th.px-4.py-2 To
+            th.px-4.py-2 Subject
+            th.px-4.py-2 Attempts
+            th.px-4.py-2 Last error
+            th.px-4.py-2
+        tbody
+          - @failed.each do |message|
+            tr.border-b.border-slate-100.dark:border-slate-800.last:border-0
+              td.px-4.py-2.whitespace-nowrap.text-slate-500.dark:text-slate-400 title=message.updated_at.iso8601
+                = "#{time_ago_in_words(message.updated_at)} ago"
+              td.px-4.py-2.whitespace-nowrap= message.mail_from
+              td.px-4.py-2.whitespace-nowrap= message.recipient
+              td.px-4.py-2.max-w-64.truncate title=outbox_subject(message)
+                = outbox_subject(message) || content_tag(:span, "(no subject)", class: "text-slate-400 dark:text-slate-500")
+              td.px-4.py-2.whitespace-nowrap= outbox_attempts_label(message)
+              td.px-4.py-2.max-w-72.truncate.text-xs.text-slate-500.dark:text-slate-400 title=message.last_error
+                = message.last_error
+              td.px-4.py-2.text-right
+                = button_to "Delete", outbox_message_path(message), method: :delete,
+                    class: "inline-block cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400",
+                    form: { data: { turbo_confirm: "Delete the failed message to #{message.recipient}?" }, class: "inline-block" }
+    = render "shared/pagination", page: @failed_page, pages: @failed_pages, count: @failed_count, noun: "failed deliveries", url: ->(page) { outbox_messages_path(page: page) }
+  - else
+    p.text-sm.text-slate-500.dark:text-slate-400 No failed deliveries.

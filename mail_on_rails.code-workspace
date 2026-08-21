@@ -1,0 +1,10 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+				{
+			"path": "../mail_on_rails_gem"
+		}
+	]
+}

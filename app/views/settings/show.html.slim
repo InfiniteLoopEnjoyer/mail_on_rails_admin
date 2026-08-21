@@ -1,0 +1,50 @@
+- page_title "Settings"
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold Settings
+
+p.mb-4.text-sm.text-slate-500.dark:text-slate-400
+  ' Overrides saved here beat the initializer, environment variables and gem
+  ' defaults, and reach the running mail servers without a restart:
+  ' connection caps, rates and lockouts apply to the next connection,
+  ' scanners and sender checks to the next message, send quotas to the next
+  ' recipient. Open connections are never cut. Leave a field blank (or on
+  ' "Default") to fall back to the environment or gem default. Boot-only
+  ' configuration (ports, bind addresses, TLS material) lives in the
+  ' environment and the initializer, not here.
+
+- @groups.each do |category, rows|
+  h2.mb-2.text-lg.font-semibold = settings_category_title(category)
+  section.mb-6.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
+    = form_with url: settings_path, method: :patch do |form|
+      .divide-y.divide-slate-100.dark:divide-slate-800
+        - rows.each do |row|
+          - name = row.definition.name
+          .flex.flex-wrap.items-center.justify-between.gap-x-4.gap-y-1.py-2
+            .min-w-64.flex-1
+              label.text-sm.font-medium.text-slate-700.dark:text-slate-200 for="settings_#{name}"
+                = settings_field_label(name)
+              p.text-xs.text-slate-500.dark:text-slate-400 = row.definition.desc
+              p.text-xs.text-slate-400.dark:text-slate-500
+                ' Currently
+                code.rounded.bg-slate-100.dark:bg-slate-800.px-1<> = row.effective_display
+                = "(#{settings_provenance_label(row)})"
+            .shrink-0
+              - case row.definition.type
+              - when :boolean
+                = select_tag "settings[#{name}]", \
+                    options_for_select([ [ "Default (#{row.fallback_display})", "" ], [ "On", "1" ], [ "Off", "0" ] ], row.override_raw.presence || ""), \
+                    id: "settings_#{name}", \
+                    class: "w-40 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-sm"
+              - when :integer
+                = number_field_tag "settings[#{name}]", row.override_raw, \
+                    id: "settings_#{name}", min: row.definition.min || 0, max: row.definition.max, step: 1, \
+                    placeholder: row.fallback_display, \
+                    class: "w-32 rounded-md border border-slate-300 dark:border-slate-600 px-2 py-1 text-sm"
+              - else
+                = text_field_tag "settings[#{name}]", row.override_raw, \
+                    id: "settings_#{name}", placeholder: row.fallback_display, \
+                    class: "w-72 rounded-md border border-slate-300 dark:border-slate-600 px-2 py-1 text-sm font-mono"
+      .mt-3
+        = form.submit "Save #{settings_category_phrase(category)}", \
+            class: "cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white"

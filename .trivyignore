@@ -1,0 +1,12 @@
+# Go stdlib/x-net CVEs in the precompiled `thrust` binary shipped inside the
+# thruster gem (0.1.25, built with Go 1.26.5; fixes landed in Go 1.26.6).
+# We can't rebuild a vendored gem binary; remove these once thruster ships a
+# release built on Go >= 1.26.6 (check `gem list thruster --remote`).
+CVE-2026-33818
+CVE-2026-39821
+CVE-2026-46600
+CVE-2026-56853
+CVE-2026-56858
+CVE-2026-56859
+CVE-2026-56860
+CVE-2026-56862

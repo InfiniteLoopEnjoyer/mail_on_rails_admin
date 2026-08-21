@@ -1,0 +1,8 @@
+- page_title "New email"
+
+header.mb-4
+  h1.text-2xl.font-bold New email
+
+= render "drafts/composer", draft: @draft, title: "New message",
+                            discard_id: @draft.draft_message_id, accounts: @email_accounts,
+                            errors: @composed_email&.errors

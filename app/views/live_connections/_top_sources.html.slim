@@ -1,0 +1,33 @@
+/ Repeat offenders: connection totals per address in the selected window
+/ (ClosedConnection.top_sources), busiest first. Rollup counters weigh in,
+/ so a scanner whose noise the history table collapses still shows its
+/ real total here. Live connections only count once they close.
+- if @top_sources.any?
+  section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+    header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+      h2.font-semibold Top sources
+      p.text-sm.text-slate-500.dark:text-slate-400
+        ' Addresses with the most connections in the selected window,
+        ' including ones the history below collapses. A high count with
+        ' zero authenticated sessions is the signature of a scanner.
+    table.w-full.text-sm
+      thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+        tr
+          th.px-4.py-2 Address
+          th.px-4.py-2.text-right Connections
+          th.px-4.py-2.text-right Authenticated
+          th.px-4.py-2 Last seen
+          th.px-4.py-2
+      tbody
+        - @top_sources.each do |source|
+          tr.border-t.border-slate-100.dark:border-slate-800
+            td.px-4.py-1.5.font-mono.break-all
+              = source[:ip]
+              = render "ip_meta", ip: source[:ip]
+            td.px-4.py-1.5.text-right.tabular-nums= number_with_delimiter(source[:connections])
+            td.px-4.py-1.5.text-right.tabular-nums class=(source[:authenticated].zero? ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300")
+              = source[:authenticated]
+            td.px-4.py-1.5.text-slate-600.dark:text-slate-300 title=source[:last_seen].strftime("%b %-d %H:%M:%S")
+              = "#{time_ago_in_words(source[:last_seen])} ago"
+            td.px-4.py-1.5.text-right
+              = render "auth_attempts/ban_button", target: source[:ip], origin: controller_name, confirm: "Ban #{source[:ip]}? Its live connections are dropped and it loses SMTP, IMAP and web login access."

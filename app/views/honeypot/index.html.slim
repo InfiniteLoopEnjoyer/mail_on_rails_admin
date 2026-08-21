@@ -1,0 +1,82 @@
+- page_title "Honeypot"
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold Honeypot
+
+  nav.flex.items-center.gap-1
+    - HoneypotController::WINDOWS.each_key do |key|
+      = link_to key, honeypot_events_path(window: key), class: window_tab_classes(@window == key)
+
+p.mb-4.text-sm.text-slate-500.dark:text-slate-400
+  ' Interactions only an attacker would have: a login against a canary account,
+  ' or an exploit-probe payload thrown at a listener. Each hit is recorded with a
+  ' redacted transcript. A canary login earns a temporary, auto-expiring throttle
+  ' (never on an allowlisted or shared address); probes are recorded only. A
+  ' permanent ban or a live kick stays your call, per row below.
+
+section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
+  - [["Events", @totals[:events]], ["Source addresses", @totals[:sources]], ["Canary logins", @totals[:canary_auths]], ["Exploit probes", @totals[:probes]]].each do |label, value|
+    .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
+      .text-xs.text-slate-500.dark:text-slate-400= label
+      .text-2xl.font-bold class=(value.to_i.positive? && label != "Source addresses" ? "text-red-700 dark:text-red-400" : "")
+        = number_with_delimiter(value)
+
+section.mb-5.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+  header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+    h2.font-semibold Recent events
+    p.text-sm.text-slate-500.dark:text-slate-400 Newest first. Open one for its full transcript.
+  - if @events.any?
+    .overflow-x-auto
+      table.w-full.text-sm
+        thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+          tr
+            th.px-4.py-2 When
+            th.px-4.py-2 Source
+            th.px-4.py-2 Protocol
+            th.px-4.py-2 Trigger
+            th.px-4.py-2 Detail
+            th.px-4.py-2 Response
+            th.px-4.py-2
+        tbody
+          - @events.each do |event|
+            - enr = event.enrichment&.with_indifferent_access
+            tr.border-t.border-slate-100.dark:border-slate-800
+              td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300= event.occurred_at.strftime("%b %-d %H:%M")
+              td.px-4.py-1.5
+                = link_to event.ip || "unknown", honeypot_event_path(event), class: "font-mono hover:text-accent hover:underline"
+                - if enr && (enr[:asn] || enr[:country])
+                  .text-xs.text-slate-500.dark:text-slate-400
+                    = [enr[:country], ("AS#{enr[:asn]}" if enr[:asn]), enr[:as_name]].compact.join(" · ")
+                - elsif enr && enr[:rdns]
+                  .text-xs.text-slate-500.dark:text-slate-400.font-mono= enr[:rdns]
+              td.px-4.py-1.5.uppercase.text-slate-600.dark:text-slate-300= event.protocol
+              td.px-4.py-1.5
+                span class=(event.trigger == "exploit_probe" ? "text-red-700 dark:text-red-400 font-medium" : "text-amber-700 dark:text-amber-400 font-medium")
+                  = event.trigger.tr("_", " ")
+              td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= event.signature || event.username
+              td.px-4.py-1.5.text-xs.text-slate-500.dark:text-slate-400= event.response
+              td.px-4.py-1.5.text-right.whitespace-nowrap
+                - if event.ip.present?
+                  = button_to "Kick", kick_honeypot_events_path, params: { ip: event.ip }, class: "mr-1 inline-block cursor-pointer rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300", form: { class: "inline-block" }
+                  = render "auth_attempts/ban_button", target: event.ip, confirm: "Permanently ban #{event.ip}? On a shared address this can affect other users. It loses SMTP, IMAP and web login access."
+  - else
+    p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 No honeypot activity in this window.
+
+section.mb-5.rounded-lg.border.border-amber-200.dark:border-amber-900.bg-amber-50.dark:bg-amber-950
+  header.border-b.border-amber-200.dark:border-amber-900.px-4.py-3
+    h2.font-semibold.text-amber-800.dark:text-amber-300 Canary accounts
+    p.text-sm.text-amber-700.dark:text-amber-400
+      ' Decoys no real user owns. Any login against one is caught above. Toggle
+      ' an account into a canary from its
+      = link_to "account settings", email_accounts_path, class: "underline"
+      | .
+  - if @canaries.any?
+    table.w-full.text-sm
+      tbody
+        - @canaries.each do |account|
+          tr.border-t.border-amber-100.dark:border-amber-900
+            td.px-4.py-1.5.font-mono
+              = link_to account.email, email_account_path(account), class: "hover:text-accent hover:underline"
+            td.px-4.py-1.5.text-right.text-xs.text-amber-700.dark:text-amber-400 canary
+  - else
+    p.px-4.py-3.text-sm.text-amber-700.dark:text-amber-400 No canary accounts yet.

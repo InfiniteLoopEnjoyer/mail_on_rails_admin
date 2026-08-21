@@ -1,0 +1,91 @@
+/ The message composer, shared by the inline reply under a received message
+/ and the standalone editor for a saved draft. Autosaves into the account's
+/ Drafts mailbox, so the draft is a real IMAP message and shows up on the
+/ user's other devices.
+/
+/ Locals: draft, title, discard_id (nil unless the draft is already saved),
+/ accounts (a From select instead of a fixed sender), errors.
+- accounts = local_assigns[:accounts]
+- errors = local_assigns[:errors]
+section.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900 data-controller="draft-autosave" data-draft-autosave-url-value=drafts_path
+  / multipart for the attachment input; attachments travel only with the
+  / send itself, not with draft autosaves (a draft revision is text).
+  = form_with url: emails_path, method: :post, multipart: true, class: "contents" do |form|
+    header.flex.flex-wrap.items-center.gap-2.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+      h2.font-semibold= title
+      span.ml-auto.text-xs.text-slate-500.dark:text-slate-400 data-draft-autosave-target="status"
+
+    - if errors&.any?
+      .border-b.border-red-200.dark:border-red-900.bg-red-50.dark:bg-red-950.px-4.py-3.text-sm.text-red-700.dark:text-red-400
+        ul.list-disc.pl-4
+          - errors.full_messages.each do |message|
+            li= message
+
+    / Autosave posts every "field" target, so the identifiers the draft needs
+    / to be saved and threaded are targets too. They never change, which
+    / keeps the "has anything changed?" snapshot stable.
+    - hidden = [["in_reply_to", draft.in_reply_to], ["references", draft.references]]
+    - hidden << ["email_account_id", draft.email_account_id] unless accounts
+    - hidden.each do |field, value|
+      = hidden_field_tag "composed_email[#{field}]", value,
+        data: { draft_autosave_target: "field", draft_field: field }
+
+    = hidden_field_tag "composed_email[message_id]", draft.message_id, data: { draft_autosave_target: "messageId" }
+    / The revision this composer supersedes; replaced by the server on each
+    / save, and sent on submit so a delivered draft leaves nothing behind.
+    = hidden_field_tag "composed_email[draft_message_id]", draft.draft_message_id, data: { draft_autosave_target: "draftId" }
+
+    .space-y-3.px-4.py-3
+      / Only when the sender is the user's to choose. Changing it moves the
+      / draft into that account's Drafts folder on the next save, so it is
+      / an autosave field like any other.
+      - if accounts
+        .grid class="grid-cols-[3rem_1fr] items-center gap-3"
+          = label_tag "composed_email_email_account_id", "From", class: "text-sm text-slate-500 dark:text-slate-400"
+          = select_tag "composed_email[email_account_id]",
+            options_from_collection_for_select(accounts, :id, :email, draft.email_account_id),
+            id: "composed_email_email_account_id",
+            class: "w-full rounded-md border border-slate-200 dark:border-slate-800 px-3 py-1.5 text-sm focus:border-accent focus:outline-none",
+            data: { draft_autosave_target: "field", draft_field: "email_account_id", action: "change->draft-autosave#schedule" }
+
+      - [["to", "To", draft.to], ["cc", "Cc", draft.cc], ["subject", "Subject", draft.subject]].each do |field, label, value|
+        .grid class="grid-cols-[3rem_1fr] items-center gap-3"
+          = label_tag "composed_email_#{field}", label, class: "text-sm text-slate-500 dark:text-slate-400"
+          = text_field_tag "composed_email[#{field}]", value,
+            id: "composed_email_#{field}",
+            class: "w-full rounded-md border border-slate-200 dark:border-slate-800 px-3 py-1.5 text-sm focus:border-accent focus:outline-none",
+            data: { draft_autosave_target: "field", draft_field: field, action: "input->draft-autosave#schedule" }
+
+      / The rich-text body (Lexxy). A saved rich draft seeds the editor with
+      / its HTML part; a plain draft (an old one, or a reply's quoted text)
+      / is escaped and line-broken into markup the editor can start from.
+      / Attachments stay disabled - files travel on the input below, as
+      / plain MIME parts, never as inline uploads.
+      - seed = draft.body_html.presence
+      - seed ||= ERB::Util.html_escape(draft.body).gsub("\n", "<br>") if draft.body.present?
+      lexxy-editor.lexxy-content.w-full.rounded-md.border.border-slate-200.dark:border-slate-800.text-sm[
+        name="composed_email[body_html]" value=seed attachments="false"
+        placeholder="Write your message…"
+        data-draft-autosave-target="field" data-draft-field="body_html"
+        data-action="lexxy:change->draft-autosave#schedule" ]
+
+      / Not an autosave field: attachments are sent with the message, they
+      / are not part of the saved draft.
+      .grid class="grid-cols-[3rem_1fr] items-center gap-3"
+        = label_tag "composed_email_attachments", "Attach", class: "text-sm text-slate-500 dark:text-slate-400"
+        = file_field_tag "composed_email[attachments][]", multiple: true,
+          id: "composed_email_attachments",
+          class: "w-full text-sm text-slate-500 dark:text-slate-400 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-slate-100 dark:file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-800 dark:file:text-slate-100"
+
+    footer.flex.flex-wrap.items-center.gap-2.border-t.border-slate-200.dark:border-slate-800.px-4.py-3
+      = form.submit "Send", class: "cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1.5 text-sm font-medium text-white"
+      p.text-xs.text-slate-500.dark:text-slate-400
+        ' Saved to Drafts as you type, so you can pick this up on another
+        ' device.
+
+  - if discard_id
+    / Outside the send form: a nested form would not be valid HTML.
+    .flex.justify-end.border-t.border-slate-200.dark:border-slate-800.px-4.py-2
+      = button_to "Discard draft", draft_path(discard_id), method: :delete,
+        class: "cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-3 py-1 text-xs font-medium text-red-700 dark:text-red-400",
+        form: { data: { turbo_confirm: "Discard this draft? It will disappear from every device." } }

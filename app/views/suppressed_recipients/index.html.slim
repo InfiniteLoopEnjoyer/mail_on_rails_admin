@@ -1,0 +1,41 @@
+- page_title "Suppressions"
+
+header.mb-4
+  h1.text-2xl.font-bold Suppressed recipients
+  p.mt-1.text-sm.text-slate-500.dark:text-slate-400
+    | Remote addresses that reported mail from this server as spam through a provider feedback loop (JMRP and friends). Outbound mail to them is bounced back to the sender instead of delivered, protecting the server's sending reputation. Lifting a suppression resumes delivery - do it only when the recipient asked for the mail again.
+
+- if @suppressed_recipients.any?
+  .overflow-x-auto.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+    table.w-full.text-left.text-sm
+      thead.border-b.border-slate-200.dark:border-slate-800.text-xs.text-slate-500.dark:text-slate-400
+        tr
+          th.px-4.py-2 Address
+          th.px-4.py-2 Complaints
+          th.px-4.py-2 Last complaint
+          th.px-4.py-2 Type
+          th.px-4.py-2 Reported via
+          th.px-4.py-2 First recorded
+          th.px-4.py-2
+      tbody
+        - @suppressed_recipients.each do |suppressed|
+          tr.border-b.border-slate-100.dark:border-slate-800.last:border-0
+            td.px-4.py-2.whitespace-nowrap= suppressed.email
+            td.px-4.py-2.whitespace-nowrap= suppressed.complaints_count
+            td.px-4.py-2.whitespace-nowrap.text-slate-500.dark:text-slate-400 title=suppressed.last_complaint_at&.iso8601
+              - if suppressed.last_complaint_at
+                = "#{time_ago_in_words(suppressed.last_complaint_at)} ago"
+              - else
+                | -
+            td.px-4.py-2.whitespace-nowrap= suppressed.feedback_type
+            td.px-4.py-2.max-w-48.truncate.text-xs.text-slate-500.dark:text-slate-400 title=suppressed.reporter
+              = suppressed.reporter
+            td.px-4.py-2.whitespace-nowrap.text-slate-500.dark:text-slate-400 title=suppressed.created_at.iso8601
+              = "#{time_ago_in_words(suppressed.created_at)} ago"
+            td.px-4.py-2.text-right
+              = button_to "Lift", suppressed_recipient_path(suppressed), method: :delete,
+                  class: "inline-block cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400",
+                  form: { data: { turbo_confirm: "Lift the suppression of #{suppressed.email}? Outbound mail to them will be attempted again - only do this if they asked for the mail." }, class: "inline-block" }
+  = render "shared/pagination", page: @page, pages: @pages, count: @count, noun: "suppressed recipients", url: ->(page) { suppressed_recipients_path(page: page) }
+- else
+  p.text-sm.text-slate-500.dark:text-slate-400 No suppressed recipients - no feedback-loop complaints have come in.

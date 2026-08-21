@@ -1,0 +1,11 @@
+#!/bin/bash -e
+
+# If running the rails server then create or migrate the database.
+# (Outbound DANE needs no resolver here anymore: the gem validates DNSSEC
+# in-process against the IANA root trust anchor, so Docker's embedded
+# stub is a fine upstream.)
+if [ "${@: -2:1}" == "./bin/rails" ] && [ "${@: -1:1}" == "server" ]; then
+  ./bin/rails db:prepare
+fi
+
+exec "${@}"

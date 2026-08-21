@@ -1,0 +1,19 @@
+- page_title "Users"
+
+= turbo_stream_from :users
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold Users
+  .flex.items-center.gap-2
+    = link_to "New user", new_user_path, class: "inline-block cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white"
+
+ul
+  - @users.each do |user|
+    li.mb-2.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+      = link_to edit_user_path(user), class: "flex items-baseline gap-3 px-4 py-3" do
+        span.primary.font-semibold= user.email_address
+        span.rounded-full.px-2.text-xs class=(user.admin? ? "bg-slate-200 dark:bg-slate-700" : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400")
+          = user.role
+        - if user == Current.user
+          span.rounded-full.bg-accent.px-2.text-xs.text-white you
+        span.ml-auto.text-xs.whitespace-nowrap.text-slate-500.dark:text-slate-400= "since #{user.created_at.strftime("%b %-d, %Y")}"

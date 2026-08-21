@@ -1,0 +1,187 @@
+require "test_helper"
+
+# Real-browser tests, for behaviour that only exists once JavaScript runs -
+# the composer's autosave in particular, which no request-level test can
+# reach. Headless Chrome; there is no display on the deploy host or in CI.
+class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
+  driven_by :selenium, using: :headless_chrome, screen_size: [ 1400, 1400 ] do |options|
+    # Chrome refuses to start as root without --no-sandbox, which is how it
+    # runs in the container.
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+  end
+
+  # Every click in these tests goes through here rather than Capybara's
+  # click_on. Headless Chrome sometimes stops delivering synthesized input
+  # events to the page altogether after a navigation - machine-state
+  # dependent, seen both on CI runners and locally: the click raises no
+  # error, hits the right coordinates, and simply never dispatches, no
+  # matter how often it is retried. Script-dispatched events are unaffected.
+  # So verify delivery - a capture-phase listener on document sees every
+  # click that actually dispatched, wherever it lands - and when a click
+  # provably never arrived, fall back to element.click() in JS, which
+  # follows the same bubbling and default-action path the app's handlers
+  # (Turbo's interceptors included) are wired to.
+  def click_on(locator = nil, **options)
+    element = find(:link_or_button, locator, **options)
+    page.execute_script(<<~JS)
+      window.clickDelivered = false;
+      document.addEventListener("click", () => window.clickDelivered = true,
+                                { capture: true, once: true });
+    JS
+    element.click
+    # A Turbo navigation swaps the body in place, so the flag survives a
+    # successful click's own page change; only a full reload could wipe it,
+    # and the stale-element rescue below covers that.
+    page.document.synchronize(2) do
+      raise Capybara::ExpectationNotMet unless page.evaluate_script("window.clickDelivered")
+    end
+  rescue Capybara::ExpectationNotMet
+    begin
+      page.execute_script("arguments[0].click()", element)
+    rescue Selenium::WebDriver::Error::StaleElementReferenceError
+      # The element is gone from the live document: the original click did
+      # land and navigation already replaced the page.
+    end
+  end
+
+  # Waits for the composer's next autosave to land, then reloads whatever
+  # the caller passes.
+  #
+  # The status text is not a usable signal on its own: after the first save
+  # it already reads "Saved to Drafts", so asserting on it passes instantly
+  # and reads stale data. Every save mints a new revision id, so watching
+  # that turn over is the signal that this particular save completed.
+  # Types into a composer field and confirms the text actually landed.
+  #
+  # Selenium will start typing as soon as the element is present, which can
+  # be before the page has finished initialising; Chrome drops keystrokes
+  # sent in that window, and the field ends up holding half a sentence. A
+  # test that then asserts on the saved draft passes or fails on a truncated
+  # string it never checked, so the fill is verified and retried here rather
+  # than trusted.
+  def compose(field, text)
+    # Keystrokes sent while the document is still loading go nowhere.
+    page.document.synchronize(5) do
+      raise Capybara::ExpectationNotMet unless page.evaluate_script("document.readyState") == "complete"
+    end
+
+    # The rich-text body is a lexxy-editor custom element, not a form field.
+    return compose_body(text) if field == "body"
+
+    locator = "composed_email[#{field}]"
+    3.times do
+      fill_in locator, with: text
+      return if page.has_field?(locator, with: text, wait: 2)
+    end
+
+    # A starved CI runner can drop the synthetic typing wholesale - the
+    # field still holds its previous value after all three attempts. Set
+    # the value directly and fire the input event a keystroke would have:
+    # what these tests verify is the Stimulus wiring reacting to input,
+    # not Chrome's keyboard emulation.
+    page.execute_script(<<~JS, find_field(locator, visible: :all), text)
+      const [field, value] = arguments;
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    JS
+    assert_field locator, with: text
+  end
+
+  # Types into the Lexxy body editor. Real keystrokes into its
+  # contenteditable make the editor emit lexxy:change itself, which is the
+  # wiring these tests exist to prove (the autosave controller listens for
+  # that event, and the element's .value feeds the payload).
+  def compose_body(text)
+    editor = find("lexxy-editor[name='composed_email[body_html]']")
+    # The contenteditable only exists once Lexical has booted.
+    area = editor.find("[contenteditable]")
+
+    3.times do
+      area.click
+      area.send_keys [ :control, "a" ], text
+      return if editor.has_selector?("[contenteditable]", text: text, wait: 2)
+    end
+
+    # Same starved-runner fallback as the plain fields: assign the value and
+    # fire the event a keystroke would have.
+    page.execute_script(<<~JS, editor, text)
+      const [editor, value] = arguments;
+      editor.value = "<p>" + value + "</p>";
+      editor.dispatchEvent(new CustomEvent("lexxy:change", { bubbles: true }));
+    JS
+    assert_selector "lexxy-editor [contenteditable]", text: text
+  end
+
+  # Polls the field's live value rather than matching on [value=...]: a CSS
+  # attribute selector reads the HTML attribute, which never changes once
+  # rendered, while the autosave assigns the DOM property.
+  def wait_for_autosave(timeout: 15)
+    field = "input[name='composed_email[draft_message_id]']"
+    before = page.find(field, visible: :all).value
+    yield if block_given?
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    loop do
+      current = page.find(field, visible: :all).value
+      return current if current.present? && current != before
+      flunk "autosave did not complete within #{timeout}s" if
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.2
+    end
+  end
+
+  # Accepts the data-turbo-confirm dialog raised by clicking `locator`.
+  #
+  # Not by clicking through the native confirm(): Selenium's modal wait
+  # races the renderer (a click still queued behind a busy main thread opens
+  # the dialog only after accept_confirm has given up), and when input
+  # delivery drops out entirely - see click_on above - no dialog ever opens
+  # to wait for. Instead Turbo's own confirm hook is stubbed to answer yes
+  # and record the prompt, which still proves the wiring under test: the
+  # attribute must be on the form and Turbo must consult it before
+  # submitting. The recorded prompt is safe to poll even though accepting
+  # navigates - a Turbo form submission swaps the body in the same JS
+  # context, so window globals survive it.
+  def accept_turbo_confirm(locator)
+    # Turbo's submit interceptor exists only once its module has executed;
+    # a click before then submits the form natively with no confirm at all.
+    page.document.synchronize(5) do
+      raise Capybara::ExpectationNotMet unless page.evaluate_script("!!window.Turbo")
+    end
+
+    page.execute_script(<<~JS)
+      window.turboConfirmPrompt = null;
+      Turbo.config.forms.confirm = (message) => {
+        window.turboConfirmPrompt = message;
+        return Promise.resolve(true);
+      };
+    JS
+
+    # The hook runs synchronously inside the submit's event-loop task, so a
+    # delivered click that reached the button implies the prompt is already
+    # set; retrying covers a delivered click that a mid-layout page let land
+    # on the wrong element.
+    attempts = 0
+    begin
+      click_on locator
+      page.document.synchronize(3) do
+        raise Capybara::ExpectationNotMet unless page.evaluate_script("window.turboConfirmPrompt != null")
+      end
+    rescue Capybara::ExpectationNotMet
+      raise if (attempts += 1) >= 3
+      retry
+    end
+  end
+
+  # Signs in through the form; the cookie-jar shortcut the integration tests
+  # use isn't available to a real browser.
+  def sign_in_as(user, password: "password")
+    visit new_session_url
+    fill_in "Enter your email address", with: user.email_address
+    fill_in "Enter your password", with: password
+    click_on "Sign in"
+    assert_no_current_path new_session_path, wait: 5
+  end
+end

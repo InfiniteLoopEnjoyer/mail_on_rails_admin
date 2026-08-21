@@ -1,0 +1,92 @@
+# syntax=docker/dockerfile:1
+# check=error=true
+
+# This Dockerfile is designed for production, not development. Use with Kamal or build'n'run by hand:
+# docker build -t mail_on_rails .
+# docker run -d -p 80:80 -e RAILS_MASTER_KEY=<value from config/master.key> --name mail_on_rails mail_on_rails
+
+# For a containerized dev environment, see Dev Containers: https://guides.rubyonrails.org/getting_started_with_devcontainer.html
+
+# Digest-pinned so builds can't silently pick up whatever the tag points at;
+# Dependabot (docker ecosystem) PRs tag and digest bumps. Keep the version in
+# sync with .ruby-version.
+FROM docker.io/library/ruby:4.0.6-slim@sha256:607bf92fa7ecebb4a0c6654b62cb44c48d94b36b6f5a754611ddbbe3dc5b6135 AS base
+
+# Rails app lives here
+WORKDIR /rails
+
+# Install base packages (upgrade first: the base image is digest-pinned, so
+# Debian security fixes only arrive through this apt run)
+RUN apt-get update -qq && \
+    apt-get upgrade -y && \
+    apt-get install --no-install-recommends -y curl libjemalloc2 libvips postgresql-client && \
+    ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+# Set production environment variables and enable jemalloc for reduced memory usage and latency.
+ENV RAILS_ENV="production" \
+    BUNDLE_DEPLOYMENT="1" \
+    BUNDLE_PATH="/usr/local/bundle" \
+    BUNDLE_WITHOUT="development:test" \
+    LD_PRELOAD="/usr/local/lib/libjemalloc.so"
+
+# Throw-away build stage to reduce size of final image
+FROM base AS build
+
+# Install packages needed to build gems
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential git libpq-dev libyaml-dev pkg-config && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+# Install application gems
+COPY vendor/* ./vendor/
+COPY Gemfile Gemfile.lock ./
+
+RUN bundle install && \
+    rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git && \
+    # -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
+    bundle exec bootsnap precompile -j 1 --gemfile
+
+# Copy application code
+COPY . .
+
+# Precompile bootsnap code for faster boot times.
+# -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
+RUN bundle exec bootsnap precompile -j 1 app/ lib/
+
+# Precompiling assets for production without requiring secret RAILS_MASTER_KEY
+RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
+
+
+
+
+# Final stage for app image
+FROM base
+
+# (No resolver package: outbound DANE's DNSSEC validation happens
+# in-process in the mail_on_rails gem, against its embedded IANA root
+# trust anchor - any recursive upstream works, untrusted.)
+
+# The bundle carries a fixed json (2.21.1); remove the base image's stale
+# default gem (json 2.18.0, CVE-2026-33210) - spec AND stdlib copies, since
+# plain `require "json"` outside bundler loads the stdlib file straight off
+# $LOAD_PATH and would silently get 2.18.0.
+RUN rm /usr/local/lib/ruby/gems/*/specifications/default/json-*.gemspec && \
+    rm -rf /usr/local/lib/ruby/[0-9]*/json.rb /usr/local/lib/ruby/[0-9]*/json \
+           /usr/local/lib/ruby/[0-9]*/*-linux*/json
+
+# Run and own only the runtime files as a non-root user for security.
+RUN groupadd --system --gid 1000 rails && \
+    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash
+USER 1000:1000
+
+# Copy built artifacts: gems, application
+COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
+COPY --chown=rails:rails --from=build /rails /rails
+
+# Entrypoint prepares the database.
+ENTRYPOINT ["/rails/bin/docker-entrypoint"]
+
+# Start server via Thruster by default, this can be overwritten at runtime
+EXPOSE 80
+CMD ["./bin/thrust", "./bin/rails", "server"]

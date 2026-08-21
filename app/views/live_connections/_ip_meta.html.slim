@@ -1,0 +1,11 @@
+/ Attribution lines under an address cell: reverse DNS, then
+/ country · AS number · AS name - whatever the IpEnrichment cache holds
+/ (the same CymruLookup data the honeypot pages show). Renders nothing
+/ for an address not yet looked up; the page's refresh loop fills it in
+/ once the background lookup lands.
+- if ip && (enr = @enrichments[ip]&.with_indifferent_access)
+  - if enr[:rdns]
+    .text-xs.font-mono.font-normal.break-all.text-slate-500.dark:text-slate-400= enr[:rdns]
+  - if enr[:country] || enr[:asn] || enr[:as_name]
+    .text-xs.font-sans.font-normal.text-slate-500.dark:text-slate-400
+      = [ enr[:country], ("AS#{enr[:asn]}" if enr[:asn]), enr[:as_name] ].compact.join(" · ")

@@ -1,0 +1,35 @@
+- protocol = controller_name.upcase
+- page_title protocol
+/ Four tables share this page; the default 4xl column crowds them.
+/ 88rem is the "8xl" Tailwind's named scale stops short of.
+- content_for :page_width, "max-w-[88rem]"
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold= protocol
+
+  / History window tabs: real page navigations, so the selection lands in
+  / the URL - which is what the refreshes below re-fetch (broadcast-driven
+  / refreshes and the poll both reload the current location).
+  nav.flex.items-center.gap-1
+    - LiveConnectionsController::WINDOWS.each_key do |key|
+      = link_to key, { window: key }, class: window_tab_classes(@window == key)
+
+p.mb-4.text-sm.text-slate-500.dark:text-slate-400
+  - if controller_name == "smtp"
+    ' Live connections on the SMTP listeners running inside this process,
+    ' updated as connections come and go. Banning an address drops its live
+    ' connections and silences future ones before the banner.
+  - else
+    ' Live connections on the IMAP listeners running inside this process,
+    ' updated as connections come and go - idling mail clients hold
+    ' connections open for a long time, so long-lived rows here are
+    ' healthy. Banning an address drops its live connections and silences
+    ' future ones before the greeting.
+
+/ The servers signal connection activity over this stream (debounced
+/ refresh broadcasts, LiveConnectionsBroadcaster); each signal makes the
+/ page re-fetch itself and morph. The slow poll only keeps relative times
+/ fresh between events and covers a dropped cable connection.
+= turbo_stream_from controller_name, :connections
+div data-controller="poll" data-poll-interval-value="30000"
+  = render "connections"

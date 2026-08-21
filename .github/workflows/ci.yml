@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  # The nightly schedule re-runs the image boot smoke; the regular test
+  # jobs are skipped there and only run for pushes and PRs. The security
+  # scans live in security.yml (with their own daily re-scan) and RuboCop
+  # in lint.yml - separate workflows so each gets its own status badge.
+  schedule:
+    - cron: "17 5 * * *"
+
+jobs:
+  # The protocol suites, fuzz harness (smoke + nightly deep runs), and
+  # their runners live in the mail_on_rails gem's own CI now.
+
+  # Trivy (scan_image) proves the image builds and its packages are clean;
+  # this proves the artifact actually RUNS: entrypoint migrations against a
+  # real postgres over the production socket path, Puma + the in-process
+  # SMTP/IMAP listeners, and /up - which stays down until the mail ports
+  # are bound (MAIL_ON_RAILS_SERVERS), so a green check covers every
+  # protocol's boot, not just HTTP.
+  boot_smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build production image
+        run: docker build -t mail_on_rails:ci .
+
+      # Production's database.yml connects over a Unix socket mounted at
+      # /postgres/socket (see config/deploy.yml); the smoke reproduces
+      # that instead of teaching the app a CI-only TCP path.
+      - name: Start postgres with a shared socket directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/pgsocket"
+          docker run -d --name smoke-pg \
+            -e POSTGRES_USER=mail_on_rails \
+            -e POSTGRES_PASSWORD=smoke \
+            -e POSTGRES_DB=mail_on_rails_production \
+            -v "$RUNNER_TEMP/pgsocket:/var/run/postgresql" \
+            postgres:17
+          for _ in $(seq 1 30); do
+            [ -S "$RUNNER_TEMP/pgsocket/.s.PGSQL.5432" ] && exit 0
+            sleep 1
+          done
+          echo "postgres socket never appeared" >&2
+          docker logs smoke-pg
+          exit 1
+
+      # Production refuses to boot the mail listeners without explicit TLS
+      # material (the self-signed fallback is development-only), so the
+      # smoke mounts a throwaway pair - exactly what the deploy mounts
+      # from /etc/letsencrypt.
+      - name: Generate throwaway TLS material
+        run: |
+          mkdir -p "$RUNNER_TEMP/tls"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=smoke.test" \
+            -keyout "$RUNNER_TEMP/tls/key.pem" -out "$RUNNER_TEMP/tls/cert.pem"
+          chmod 644 "$RUNNER_TEMP/tls/key.pem" "$RUNNER_TEMP/tls/cert.pem"
+
+      - name: Boot the app container
+        run: |
+          # SMTP_CLAMAV_OPTIONAL: the gem refuses to boot in production without
+          # a clamd address, and the smoke environment has no ClamAV container.
+          docker run -d --name smoke-app -p 8080:80 \
+            -v "$RUNNER_TEMP/pgsocket:/postgres/socket" \
+            -v "$RUNNER_TEMP/tls:/tls:ro" \
+            -e POSTGRES_DB=mail_on_rails_production \
+            -e POSTGRES_USER=mail_on_rails \
+            -e POSTGRES_PASSWORD=smoke \
+            -e SECRET_KEY_BASE="$(openssl rand -hex 64)" \
+            -e MAIL_ON_RAILS_WEB_HOST=smoke.local \
+            -e MAIL_ON_RAILS_SERVERS=true \
+            -e MAIL_ON_RAILS_TLS_CERT=/tls/cert.pem \
+            -e MAIL_ON_RAILS_TLS_KEY=/tls/key.pem \
+            -e SMTP_TLS_CERT=/tls/cert.pem \
+            -e SMTP_TLS_KEY=/tls/key.pem \
+            -e SMTP_CLAMAV_OPTIONAL=1 \
+            mail_on_rails:ci
+
+      - name: Wait for /up to report healthy
+        run: |
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /tmp/up.body -w '%{http_code}' http://localhost:8080/up || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "never turned healthy (last status: ${code:-none})" >&2
+          cat /tmp/up.body 2>/dev/null
+          exit 1
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker logs smoke-app 2>&1 || true
+          docker logs smoke-pg 2>&1 || true
+
+  test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          bundler-cache: true
+
+      - name: Install libvips
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips
+
+      # DatabaseBackupJobTest shells out to pg_dump, which refuses to dump
+      # a server newer than itself - the runner ships the v16 client while
+      # the service container (and production) run postgres 17. PGDG has
+      # the matching client.
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+
+      - name: Run tests
+        env:
+          RAILS_ENV: test
+          DATABASE_HOST: 127.0.0.1
+          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+        run: bin/rails db:test:prepare test
+
+  system-test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          bundler-cache: true
+
+      - name: Install libvips
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips
+
+      - name: Run System Tests
+        env:
+          RAILS_ENV: test
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: 5432
+          DATABASE_USERNAME: postgres
+          DATABASE_PASSWORD: postgres
+          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+        run: |
+          bin/rails db:test:prepare
+
+          if find test/system -name "*_test.rb" -type f 2>/dev/null | grep -q .; then
+            bin/rails test:system
+          else
+            echo "No system tests found. Skipping system-test job."
+          fi
+
+      - name: Keep screenshots from failed system tests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: screenshots
+          path: ${{ github.workspace }}/tmp/screenshots
+          if-no-files-found: ignore

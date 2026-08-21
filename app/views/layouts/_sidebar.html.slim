@@ -1,0 +1,16 @@
+aside.fixed.top-14.bottom-0.left-0.z-40.flex.w-64.-translate-x-full.flex-col.border-r.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.transition-transform.duration-200.lg:translate-x-0 data-drawer-target="panel" aria-label="Main navigation"
+  nav.flex-1.space-y-1.p-3
+    - if Current.user.admin?
+      = link_to "Domains", domains_path, class: nav_link_classes(domains_section?)
+      = link_to "Mailboxes", root_path, class: nav_link_classes(mailboxes_section?, child: true)
+      = link_to "Users", users_path, class: nav_link_classes(users_section?)
+      = link_to "SMTP", smtp_path, class: nav_link_classes(smtp_section?)
+      = link_to "IMAP", imap_path, class: nav_link_classes(imap_section?)
+      = link_to "Outbox", outbox_messages_path, class: nav_link_classes(outbox_section?)
+      = link_to "Suppressions", suppressed_recipients_path, class: nav_link_classes(suppressions_section?, child: true)
+      = link_to "Security", auth_attempts_path, class: nav_link_classes(security_section?)
+      = link_to "Honeypot", honeypot_events_path, class: nav_link_classes(honeypot_section?)
+      = link_to "Audit log", audit_events_path, class: nav_link_classes(audit_section?)
+      = link_to "Settings", settings_path, class: nav_link_classes(settings_section?)
+    - else
+      = link_to "Mailboxes", root_path, class: nav_link_classes(mailboxes_section?)

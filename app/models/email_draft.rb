@@ -1,0 +1,185 @@
+# A draft being composed in the web UI.
+#
+# There is no separate drafts table: a draft *is* an EmailMessage in the
+# account's Drafts mailbox carrying the \Draft flag, which is the only way
+# an IMAP client will ever see it. That makes the mailbox the single source
+# of truth, and the web UI a peer of the phone rather than a second store
+# that has to be reconciled with one.
+#
+# Saving follows the same shape as IMAP's own REPLACE (RFC 8508), because
+# it is the only shape available: messages are immutable, so a revision is
+# a *new* message plus an expunge of the one it supersedes. Every save
+# therefore mints a new id and a new UID - callers must carry the id
+# forward rather than assume it is stable. The same is true in reverse: a
+# phone editing this draft replaces the message out from under us, so a
+# save against a superseded revision is expected, not exceptional (see
+# #save, which treats a missing previous revision as "already gone").
+class EmailDraft
+  include ActiveModel::Model
+
+  # \Seen alongside \Draft: it is the user's own message, so showing it as
+  # unread in the folder list (and in the account's unread badge) is noise.
+  FLAGS = [ "\\Draft", "\\Seen" ].freeze
+  MAILBOX = "Drafts"
+
+  attr_accessor :email_account_id, :to, :cc, :subject, :body, :body_html,
+                :in_reply_to, :references, :message_id
+
+  # The saved revision this draft supersedes, if any.
+  attr_accessor :draft_message_id
+
+  validate :account_chosen
+
+  # Re-resolved whenever email_account_id changes: the composer lets the
+  # sender be switched mid-draft, and a memo that outlived the change would
+  # file the next revision into the old account's Drafts folder.
+  def account
+    @account = nil unless @account&.id.to_s == email_account_id.to_s
+    @account ||= MailOnRails::EmailAccount.find_by(id: email_account_id)
+  end
+
+  # Prefills a reply to +message+: recipient, "Re:" subject, threading
+  # headers, and the quoted original.
+  def self.reply_to(message, account: message.mailbox.email_account)
+    new(
+      email_account_id: account.id,
+      to: message.from_address,
+      subject: reply_subject(message.subject),
+      body: quoted(message),
+      in_reply_to: message.message_id.presence,
+      references: [ message.references, message.message_id ].compact_blank.join(" ").presence
+    )
+  end
+
+  # Reads a saved draft back out of its message so the composer can carry
+  # on from it. The message is the only record of the draft, so everything
+  # comes off the wire form - including message_id, which keeps the thread
+  # intact across the revisions this editing session will produce.
+  def self.from_message(message)
+    mail = message.parsed
+    new(
+      email_account_id: message.mailbox.email_account_id,
+      to: Array(mail.to).join(", ").presence,
+      cc: Array(mail.cc).join(", ").presence,
+      subject: mail.subject.to_s.presence,
+      body: message.text_body,
+      # A rich draft is multipart/alternative; its HTML part comes back so
+      # the editor resumes with formatting intact. It is this app's own
+      # sanitized-at-save markup, and it is sanitized again on every save
+      # and send, so reading it raw here adds no surface.
+      body_html: mail.html_part&.decoded&.presence,
+      in_reply_to: Array(mail.in_reply_to).first,
+      references: Array(mail.references).join(" ").presence,
+      message_id: message.message_id.presence,
+      draft_message_id: message.id
+    )
+  end
+
+  def self.reply_subject(subject)
+    subject = subject.to_s.strip
+    return "Re: (no subject)" if subject.empty?
+
+    subject.match?(/\Are:\s/i) ? subject : "Re: #{subject}"
+  end
+
+  # Attribution line plus the original quoted with "> ", the convention
+  # every mail client renders as a quote.
+  def self.quoted(message)
+    quoted_body = message.text_body.to_s.lines.map { |line| "> #{line.chomp}" }.join("\n")
+    "\n\n#{message.from_address} wrote:\n#{quoted_body}\n"
+  end
+
+  def drafts_mailbox
+    account&.find_mailbox(MAILBOX)
+  end
+
+  # True once there is anything worth persisting. Autosave fires on a timer,
+  # and an empty draft in the mailbox is worse than no draft at all - it
+  # shows up on every device as a piece of litter to clean up.
+  def blank?
+    [ to, cc, subject ].all?(&:blank?) && body.to_s.strip.blank? && html_blank?
+  end
+
+  # Writes this revision and expunges the one it supersedes, returning the
+  # new EmailMessage (or nil when there is nothing to save). Both halves run
+  # in one transaction so a draft can never be lost between them.
+  def save
+    return nil unless valid?
+    return nil if blank?
+
+    mailbox = drafts_mailbox
+    errors.add(:base, "no Drafts mailbox") and return nil if mailbox.nil?
+
+    self.message_id ||= new_message_id
+    ApplicationRecord.transaction do
+      saved = MailOnRails::EmailMessage.deliver_raw(mailbox, build_raw, flags: FLAGS.dup,
+                                                          authenticated_as: account.email)
+      discard_previous
+      self.draft_message_id = saved.id
+      saved
+    end
+  end
+
+  # Removes the saved revision, if it is still there. Used when a draft is
+  # sent or abandoned.
+  def discard
+    discard_previous
+    self.draft_message_id = nil
+    true
+  end
+
+  # Hands this draft to the sending path. The Drafts copy is dropped only
+  # once delivery has committed, so a failed send leaves the draft intact.
+  def deliver
+    composed = ComposedEmail.new(email_account_id: email_account_id, to: to, cc: cc,
+                                 subject: subject, body: body, body_html: body_html,
+                                 message_id: message_id,
+                                 in_reply_to: in_reply_to, references: references)
+    return false unless composed.deliver
+
+    discard
+    true
+  end
+
+  def build_raw
+    ComposedEmail.new(email_account_id: email_account_id, to: to, cc: cc, subject: subject,
+                      body: body, body_html: body_html,
+                      in_reply_to: in_reply_to, references: references,
+                      message_id: message_id).build_raw
+  end
+
+  private
+
+  # An "empty" rich editor still submits markup (an empty paragraph), so
+  # blankness is judged on the text the markup renders to.
+  def html_blank?
+    body_html.blank? || Loofah.fragment(body_html.to_s).text.strip.blank?
+  end
+
+  # A stable Message-ID across revisions, so a threading client (and our
+  # own In-Reply-To handling) sees one draft being revised rather than a
+  # string of unrelated messages.
+  def new_message_id
+    "<#{SecureRandom.uuid}@#{account.email.to_s.split("@").last}>"
+  end
+
+  # The previous revision may already be gone - expunged by a phone that
+  # saved its own revision, or by a concurrent autosave. That is ordinary,
+  # so a miss is silent.
+  #
+  # Looked up by id rather than inside the destination mailbox: changing
+  # the From account moves the draft into a *different* account's Drafts
+  # folder, and scoping the lookup to the destination would strand the old
+  # revision in the previous account's folder. Guarded on draft? so an id
+  # naming an ordinary message can never delete real mail.
+  def discard_previous
+    return if draft_message_id.blank?
+
+    previous = MailOnRails::EmailMessage.find_by(id: draft_message_id)
+    previous.destroy if previous&.draft?
+  end
+
+  def account_chosen
+    errors.add(:email_account_id, "must be chosen") if account.nil?
+  end
+end

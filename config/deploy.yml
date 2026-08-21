@@ -1,0 +1,334 @@
+<% require "dotenv"; Dotenv.load(".env") %>
+
+# Generic template - real infrastructure (hosts, domains) lives in the
+# gitignored destination overlay config/deploy.prod.yml. Deploy with
+# `bin/kamal deploy -d prod`.
+
+# Name of your application. Used to uniquely configure containers.
+service: mail_on_rails
+
+# Name of the container image (use your-user/app-name on external registries).
+image: mail_on_rails
+
+# The unified mail service: one Puma process serves everything - web UI,
+# the in-process SMTP and IMAP servers (the :mail_on_rails Puma plugin,
+# lib/puma/plugin/mail_on_rails.rb), and the Solid Queue supervisor
+# (SOLID_QUEUE_IN_PUMA - Action Mailbox routing and outbound delivery
+# need owner-level grants, and this is the only owner-privileged
+# container).
+#
+# HTTPS still rides behind stock kamal-proxy (proxy: below); the mail
+# ports publish straight off this container (options: publish), which is
+# why .kamal/hooks/pre-app-boot stops the old container before the new
+# one boots - kamal's boot-new-first order would clash on those ports.
+# Every deploy therefore has a short full outage (SMTP senders retry,
+# IMAP clients reconnect, and Server#shutdown drains sessions first).
+servers:
+  web:
+    hosts:
+      - 192.168.0.1
+    options:
+      # Host port -> in-container port (the daemons bind >1024 because
+      # the container runs as uid 1000): SMTP 25, submission 587,
+      # submissions/SMTPS 465, IMAP 143, IMAPS 993.
+      publish:
+        - "25:1025"
+        - "587:1587"
+        - "465:1465"
+        - "143:1143"
+        - "993:1993"
+    env:
+      clear:
+        # Run the Solid Queue supervisor inside Puma (see config/puma.rb).
+        SOLID_QUEUE_IN_PUMA: true
+
+        # Run the SMTP + IMAP servers inside Puma (the :mail_on_rails
+        # plugin). /up stays down until their listeners are bound.
+        MAIL_ON_RAILS_SERVERS: true
+
+        # EHLO/banner name for the SMTP server and outbound delivery; must
+        # match this host's public mail name (and ideally the droplet's
+        # PTR record).
+        # To relay through a provider instead of delivering to MXes directly,
+        # also set MAIL_ON_RAILS_SMARTHOST (host:port) and
+        # MAIL_ON_RAILS_SMARTHOST_USER/_PASSWORD.
+        SMTP_HELO_HOST: mail.example.com
+
+        # Web-UI/mailer host (proxy.host below and Action Mailer link
+        # generation in config/environments/production.rb).
+        MAIL_ON_RAILS_WEB_HOST: www.example.com
+
+        # TLS for the mail listeners: the certbot accessory (below) renews
+        # into /etc/letsencrypt on the host, mounted read-only into this
+        # container. Both servers re-read the PEMs on mtime change, so a
+        # renewal needs no restart. With these set, unusable material is
+        # fatal at boot on both protocols - explicitly configured TLS
+        # never degrades to plaintext.
+        #
+        # Accept-side abuse caps (per-IP connection cap, connection-rate
+        # tarpit, auth lockout) default on for both protocols; tune or
+        # disable (0) with SMTP_MAX_CONN_PER_IP / SMTP_CONN_RATE /
+        # SMTP_AUTH_LOCKOUT_FAILURES and their MAIL_ON_RAILS_IMAP_*
+        # equivalents. SMTP connections additionally have an absolute
+        # lifetime (SMTP_SESSION_SECONDS, default 3600) - the slowloris
+        # bound; IMAP has none because IDLE is long-lived by design.
+        MAIL_ON_RAILS_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
+        MAIL_ON_RAILS_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
+        SMTP_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
+        SMTP_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
+
+        # Outbound DKIM signing needs no config here: private keys live
+        # encrypted in the domains table (minted by the Domains admin UI on
+        # domain creation); the public halves are published as
+        # <selector>._domainkey.<domain> TXT records (selector default:
+        # rail, override with MAIL_ON_RAILS_DKIM_SELECTOR).
+
+        # Permanent IP/CIDR bans (BannedIp - auth attempts page + Spamhaus
+        # DROP import) need no config: both in-process listeners poll the
+        # table through their stores and drop matches before any banner.
+
+        # Virus scanning: the SMTP server scans at DATA time (rejects
+        # infected mail before acceptance, fails closed with 451 when
+        # clamd is down - so keep the clamav accessory healthy), and the
+        # mailroom + IMAP APPEND rescan app-side (defense in depth). One
+        # address drives every scan path and there is no built-in
+        # default - unset (or "") turns scanning off everywhere, and the
+        # mail servers refuse to boot like that in production unless
+        # SMTP_CLAMAV_OPTIONAL=1 explicitly opts out.
+        SMTP_CLAMAV_ADDR: mail_on_rails-clamav:3310
+
+        # rspamd accessory (see accessories below), reached by container name
+        # over the kamal docker network. Two consumers: the mailroom POSTs
+        # each inbound message here to compute SPF/DKIM/DMARC (+ a spam
+        # action) from the edge-stamped connection facts - rspamd is the
+        # verdict authority for filing; the SMTP server's own
+        # SPF/DKIM/DMARC stack is a connection-time gate - and the SMTP
+        # server scores authenticated submissions at DATA, refusing
+        # rspamd's "reject"/"soft reject" actions (the tripwire for a
+        # compromised account pumping spam; fails open when rspamd is
+        # down). Unset to disable both.
+        SMTP_RSPAMD_ADDR: mail_on_rails-rspamd:11333
+
+        # Per-account outbound quota: recipients accepted from an
+        # authenticated sender per sliding window (seconds), answered with
+        # a retryable 452 once exhausted. Bounds what a stolen password is
+        # worth to a botnet - per-IP limits never see one credential
+        # worked from many IPs. Defaults shown; SMTP_SEND_QUOTA: 0
+        # disables.
+        # SMTP_SEND_QUOTA: 200
+        # SMTP_SEND_QUOTA_WINDOW: 3600
+
+        # Mail-in-transit hardening: the gem defaults to the enforcing
+        # posture (verified outbound TLS, MTA-STS enforce, DMARC
+        # enforcement, rspamd fail-closed) - nothing to flip on. A brand
+        # new deployment that still needs to soak (TLS-RPT reports not yet
+        # clean, "would reject under DMARC enforcement" logs not yet
+        # quiet) weakens the relevant knob explicitly and removes the
+        # override when the soak is done; Settings::Check nags in
+        # production until it is.
+        # SMTP_OUTBOUND_REQUIRE_VERIFIED_TLS: 0
+        # MAIL_ON_RAILS_MTA_STS_MODE: testing
+        # SMTP_DMARC_ENFORCE: 0
+        # MAILROOM_DMARC_ENFORCE: log
+        # SMTP_RSPAMD_FAIL_CLOSED: 0
+        # MAIL_ON_RAILS_SMARTHOST_TLS: starttls
+
+        # Outbound DANE needs no resolver configuration: the gem
+        # validates DNSSEC in-process (chain of trust walked to its
+        # embedded IANA root anchor, denial proofs included), so the mail
+        # DNS client can query any upstream - including Docker's embedded
+        # stub from resolv.conf, untrusted. MAIL_ON_RAILS_DNS_NAMESERVERS
+        # remains available to point at a different upstream if the host
+        # DNS path is ever unreliable.
+
+        # Set number of processes dedicated to Solid Queue (default: 1)
+        # JOB_CONCURRENCY: 3
+
+        # Nightly pg_dump retention (DatabaseBackupJob writes onto the
+        # storage volume; docs/backups.md covers restore and offsite
+        # copies). Defaults shown.
+        # DB_BACKUP_KEEP_DAYS: 14
+        # DB_BACKUP_DIR: /rails/storage/backups
+
+        # Backup encryption: DB_BACKUP_ENCRYPTION_KEY is wired as a Kamal
+        # secret (see env.secret below and .kamal/secrets-common); dumps
+        # are AES-256-GCM encrypted (.dump.enc). See docs/backups.md.
+
+        # Prometheus: GET /metrics needs both METRICS_TOKEN (better: as a
+        # secret in .kamal/secrets), presented by scrapers as a bearer
+        # token, and METRICS_ALLOW_IPS (comma-separated IPs/CIDRs) pinning
+        # the endpoint to your scraper's addresses - a token alone is one
+        # leaked scrape config away from open, so without the allowlist
+        # the endpoint stays 404. See MetricsController for the series.
+        # METRICS_TOKEN: choose-a-long-random-string
+        # METRICS_ALLOW_IPS: 10.0.0.0/8
+
+        # The second-factor mandate is on by default: users without a
+        # second factor are parked on 2FA enrollment until they register
+        # one - a password-only admin is the whole system's weakest link.
+        # Single-operator setups that accept that risk opt out explicitly.
+        # MAIL_ON_RAILS_REQUIRE_2FA: 0
+
+# Enable SSL auto certification via Let's Encrypt and allow for multiple apps on a single web server.
+# If used with Cloudflare, set encryption mode in SSL/TLS setting to "Full" to enable CF-to-app encryption.
+#
+# Using an SSL proxy like this requires turning on config.assume_ssl and config.force_ssl in production.rb!
+proxy:
+  ssl: true
+  # List every hosted domain's MTA-STS policy host (mta-sts.<domain>)
+  # alongside the web host: the Domains UI CNAMEs them here and the app
+  # serves /.well-known/mta-sts.txt, but kamal-proxy only obtains
+  # certificates for hosts named below.
+  hosts:
+    - www.example.com
+    - mta-sts.example.com
+
+# Give the containers time to boot: the web entrypoint runs db:prepare
+# before /up turns healthy.
+deploy_timeout: 120
+
+# Where you keep your container images.
+#
+# This is the local registry container (kamal-docker-registry) on the machine
+# you deploy from. Kamal recognises a localhost registry and opens a reverse
+# SSH tunnel to it for the push/pull window itself (Kamal::Cli::Build::
+# PortForwarding), so "localhost:5555" resolves to it on both ends - do NOT
+# add a tunnel hook of your own, it will squat on the remote port and make
+# kamal's own forward fail. Docker allows plain HTTP for 127.0.0.0/8
+# registries, so no TLS or auth is needed.
+registry:
+  server: localhost:5555
+
+# Inject ENV variables into containers (secrets come from .kamal/secrets).
+env:
+  secret:
+    - RAILS_MASTER_KEY
+    - POSTGRES_PASSWORD
+    # Cloudflare API token (Zone:Read + DNS:Edit over the hosted zones)
+    # for the Domains UI's "Publish DNS" button - see DnsPublisher. Unset
+    # = the button is hidden; nothing else uses it.
+    - CLOUDFLARE_API_TOKEN
+    # AES-256-GCM key for the nightly DB dump (DatabaseBackupJob). Set =
+    # encrypted .dump.enc on the storage volume; unset = plaintext dumps +
+    # a nightly warning. Generate `openssl rand -hex 32`, keep it in the
+    # gitignored .env, and ESCROW IT OFFSITE - the key lives on the deploy
+    # machine, not the droplet, so losing it makes existing backups
+    # unrecoverable. bin/db-backup-decrypt recovers them for pg_restore.
+    - DB_BACKUP_ENCRYPTION_KEY
+  clear:
+    # Database (postgres accessory below, reached over its Unix socket).
+    # The rest of the connection config lives in config/database.yml.
+    POSTGRES_USER: mail_on_rails
+    POSTGRES_DB: mail_on_rails_production
+
+    # WEB_CONCURRENCY must stay unset/1: the mail listeners live in
+    # exactly one process, and the :mail_on_rails plugin refuses cluster
+    # mode outright.
+
+    # Log everything from Rails
+    # RAILS_LOG_LEVEL: debug
+
+# Aliases are triggered with "bin/kamal <alias>". You can overwrite arguments on invocation:
+# e.g. "bin/kamal logs --grep ingress".
+aliases:
+  console: app exec --interactive --reuse "bin/rails console"
+  shell: app exec --interactive --reuse "bash"
+  logs: app logs -f
+  dbc: app exec --interactive --reuse "bin/rails dbconsole --include-password"
+  # On-demand pg_dump onto the storage volume (the nightly one is
+  # DatabaseBackupJob in config/recurring.yml). Restore: docs/backups.md.
+  backup: app exec --reuse "bin/db-backup"
+
+# Certbot renewal daemon for the mail-port TLS cert (DNS-01 via Cloudflare,
+# so it never needs port 80). Runs as the same uid as the app container, so
+# every PEM it writes under /etc/letsencrypt is readable by the app without
+# permission hooks. First issuance is a one-off `certonly` run (see
+# /etc/letsencrypt/cloudflare.ini on the host for the API token, mode 600).
+accessories:
+  # PostgreSQL for the production databases (primary/cache/queue/cable -
+  # bin/rails db:prepare in the entrypoint creates all four on first boot,
+  # since POSTGRES_USER is the image's superuser). The app talks to it over
+  # the Unix socket shared through the host directory below, so Postgres
+  # never listens on the network.
+  db:
+    image: postgres:16
+    host: 192.168.0.1
+    env:
+      clear:
+        POSTGRES_USER: mail_on_rails
+        POSTGRES_DB: mail_on_rails_production
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - data:/var/lib/postgresql/data
+      - socket/:/var/run/postgresql
+
+  # ClamAV daemon scanning inbound mail. Two readers, both in the app
+  # container: the SMTP server scans at DATA time (rejects infected mail
+  # before acceptance, fails closed with 451 when clamd is down - so keep
+  # this accessory healthy) and the mailroom + IMAP APPEND rescan
+  # (defense in depth). Reached on TCP 3310 over the shared "kamal"
+  # docker network by container name
+  # (mail_on_rails-clamav) - no host port is published. First boot
+  # downloads ~300MB of signatures and takes minutes to turn healthy (the
+  # image ships its own HEALTHCHECK and internal freshclam updater); the
+  # volume below persists the database across restarts. clamd holds
+  # signatures in RAM (~1.5GB, briefly doubling during reloads): the host
+  # needs >=4GB total. If memory gets tight, mount a clamd.conf with
+  # "ConcurrentDatabaseReload no".
+  clamav:
+    image: clamav/clamav:1.4
+    host: 192.168.0.1
+    directories:
+      - clamav-db:/var/lib/clamav
+
+  # rspamd computing SPF/DKIM/DMARC (and a spam score) for inbound mail.
+  # The app POSTs each message to the normal worker on TCP 11333 over the
+  # shared "kamal" docker network by container name (mail_on_rails-rspamd) -
+  # no host port is published. rspamd needs outbound DNS to do the SPF/DKIM/
+  # DMARC lookups the app never could (it never saw the live connection).
+  # SPF/DKIM/DMARC run out of the box with no config; Redis is only needed
+  # for the stateful modules (greylisting, ratelimit, fuzzy). Pin the tag to
+  # a current release. The volume persists learned data across restarts.
+  rspamd:
+    image: rspamd/rspamd:3.9
+    host: 192.168.0.1
+    directories:
+      - rspamd-data:/var/lib/rspamd
+
+  # (Outbound DANE has no resolver accessory: DNSSEC validation is
+  # in-process in the mail_on_rails gem. The app container only needs
+  # ordinary DNS through Docker's embedded stub.)
+
+  certbot:
+    image: certbot/dns-cloudflare
+    host: 192.168.0.1
+    options:
+      user: "1000:1000"
+      entrypoint: /bin/sh
+    cmd: -c "while true; do certbot renew --quiet; sleep 12h; done"
+    volumes:
+      - "/etc/letsencrypt:/etc/letsencrypt"
+      - "/var/lib/letsencrypt:/var/lib/letsencrypt"
+      - "/var/log/letsencrypt:/var/log/letsencrypt"
+
+# Use a persistent storage volume for local Active Storage files (inbound
+# mail blobs land there via Action Mailbox) and DKIM keys. The postgres socket dir is the accessory's
+# "socket/" directory on the host (kamal puts accessory dirs under
+# /root/<service>-<accessory>/).
+volumes:
+  - "mail_on_rails_storage:/rails/storage"
+  - "/root/mail_on_rails-db/socket:/postgres/socket"
+  # The mail listeners' TLS certs, renewed by the certbot accessory into
+  # this host path (its deploy-hook chmods privkey to 0644 so uid 1000
+  # can read it).
+  - "/etc/letsencrypt:/etc/letsencrypt:ro"
+
+# Bridge fingerprinted assets, like JS and CSS, between versions to avoid
+# hitting 404 on in-flight requests. Combines all files from new and old
+# version inside the asset_path.
+asset_path: /rails/public/assets
+
+# Configure the image builder.
+builder:
+  arch: amd64

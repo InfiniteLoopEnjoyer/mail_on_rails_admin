@@ -1,0 +1,240 @@
+- page_title "#{@domain.name}"
+- mail_host = ENV["SMTP_HELO_HOST"].presence || "<your mail host>"
+
+= turbo_stream_from @domain
+
+nav.mb-2.text-sm.text-slate-500.dark:text-slate-400
+  =<> link_to "Domains", domains_path, class: "text-accent"
+  | /
+  span<>= @domain.name
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold= @domain.name
+  .flex.items-center.gap-2
+    = button_to "Recheck DNS", recheck_dns_domain_path(@domain), class: "inline-block cursor-pointer rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-slate-700 dark:text-slate-300"
+    - if MailOnRails::CloudflareDns.enabled?
+      = button_to "Publish DNS to Cloudflare", publish_dns_domain_path(@domain), class: "inline-block cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white", form: { data: { turbo_confirm: "Create #{@domain.name}'s missing DNS records in Cloudflare? Existing MX/SPF/DMARC/TLS-RPT records are never overwritten; only mismatched DKIM and MTA-STS TXTs are updated." } }
+    = button_to "Delete", domain_path(@domain), method: :delete, class: "inline-block cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-red-700 dark:text-red-400", form: { data: { turbo_confirm: "Remove #{@domain.name}? Inbound mail for it is immediately refused and outbound mail stops being DKIM-signed." } }
+
+.mb-4.flex.flex-wrap.gap-2
+  - if @domain.dkim_private_key.present?
+    span.rounded-full.bg-green-100.dark:bg-green-950.px-2.py-0.5.text-xs.text-green-700.dark:text-green-400 DKIM key present
+  - else
+    span.rounded-full.bg-yellow-100.dark:bg-yellow-950.px-2.py-0.5.text-xs.text-yellow-700.dark:text-yellow-400 DKIM key missing (outbound goes unsigned)
+  span.rounded-full.bg-green-100.dark:bg-green-950.px-2.py-0.5.text-xs.text-green-700.dark:text-green-400 accepting mail
+
+h2.mb-2.text-lg.font-semibold DNS records to publish
+p.mb-3.text-sm.text-slate-500.dark:text-slate-400
+  ' Mail for this domain only flows once these records exist (and
+  =<> link_to "accounts", root_path, class: "text-accent"
+  ' with @#{@domain.name} addresses are created). Status is checked live
+  ' against public DNS on each page load.
+
+- dns_status = @dns.checks.index_by(&:record)
+- status_badges = { pass: [ "published", "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400" ], warn: [ "verify", "bg-yellow-100 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-400" ], fail: [ "missing/wrong", "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400" ], unknown: [ "unknown", "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300" ] }
+.mb-4.divide-y.divide-slate-100.dark:divide-slate-800.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+  - rows = [ [ "MX", "MX", @domain.name, "10 #{mail_host}." ], [ "TXT (SPF)", "SPF", @domain.name, "v=spf1 mx -all" ], [ "TXT (DKIM)", "DKIM", @domain.dkim_txt_name, nil ], [ "TXT (DMARC)", "DMARC", "_dmarc.#{@domain.name}", "v=DMARC1; p=none; rua=mailto:#{@domain.dmarc_address}" ], [ "TXT (MTA-STS)", "MTA-STS", "_mta-sts.#{@domain.name}", MailOnRails::MtaSts.configured? ? MailOnRails::MtaSts.txt_record : "v=STSv1; id=<set the SMTP hostname first>" ], [ "TXT (TLS-RPT)", "TLS-RPT", "_smtp._tls.#{@domain.name}", "v=TLSRPTv1; rua=mailto:#{@domain.tls_rpt_address}" ] ]
+  - rows.each do |label, key, record_name, value|
+    - c = dns_status[key]
+    - badge_text, badge_class = status_badges[c.status]
+    .p-4
+      .mb-2.flex.flex-wrap.items-center.gap-2
+        span.text-sm.font-semibold= label
+        span.rounded-full.px-2.py-0.5.text-xs.whitespace-nowrap class=badge_class
+          = badge_text
+      .space-y-1.text-sm
+        .flex.gap-3
+          span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Name
+          code.break-all= record_name
+        .flex.gap-3
+          span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Value
+          - if key == "DKIM"
+            - if @domain.dkim_private_key.present?
+              code.break-all= @domain.dkim_txt_value
+            - else
+              span.text-slate-500.dark:text-slate-400 (no key on this server)
+          - else
+            code= value
+      - if c.note
+        p.mt-2.text-xs.text-slate-500.dark:text-slate-400= c.note
+      - elsif c.found && c.status == :pass && key != "DMARC"
+        p.mt-2.text-xs.break-all.text-slate-500.dark:text-slate-400= c.found
+
+p.mb-6.text-xs.text-slate-500.dark:text-slate-400
+  ' Start with p=none; the monitoring section below tells you when it is
+  ' safe to tighten. DKIM selector:
+  code<>= @domain.dkim_selector
+  ' . Aggregate reports are delivered to
+  code<>= @domain.dmarc_address
+  '  (auto-created) and parsed automatically.
+  ' MTA-STS senders fetch the policy (currently mode: #{MailOnRails::MtaSts.mode}) from
+  code<> https://mta-sts.#{@domain.name}/.well-known/mta-sts.txt
+  ' - publishing creates that CNAME, and this app serves the file; the
+  ' host must also be listed under the kamal proxy's hosts so it gets a
+  ' certificate. TLS failure reports (TLS-RPT) are mailed to
+  code<>= @domain.tls_rpt_address
+  '  (auto-created) and parsed automatically.
+
+h2.mb-2.text-lg.font-semibold DKIM key rotation
+.mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-4
+  .mb-2.flex.flex-wrap.items-center.justify-between.gap-2
+    .text-sm
+      ' Signing selector:
+      code<>= @domain.dkim_selector
+      - if @domain.dkim_rotated_at
+        span.text-slate-500.dark:text-slate-400<>= "(rotated #{@domain.dkim_rotated_at.to_date})"
+      - else
+        span.text-slate-500.dark:text-slate-400<>= "(never rotated)"
+    - unless @domain.dkim_staged?
+      = button_to "Rotate DKIM key", rotate_dkim_domain_path(@domain), class: "inline-block cursor-pointer rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-slate-700 dark:text-slate-300", form: { data: { turbo_confirm: "Stage a new DKIM key for #{@domain.name}? Signing switches only after its DNS TXT is published and visible; the current key keeps signing until then." } }
+  - if @domain.dkim_staged?
+    .space-y-1.text-sm
+      p
+        span.rounded-full.bg-yellow-100.dark:bg-yellow-950.px-2.py-0.5.text-xs.text-yellow-700.dark:text-yellow-400 rotation staged
+        span.ml-2 Publish this TXT (button above); the daily job promotes the key once public DNS shows it.
+      .flex.gap-3
+        span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Name
+        code.break-all= @domain.dkim_next_txt_name
+      .flex.gap-3
+        span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Value
+        code.break-all= @domain.dkim_next_txt_value
+  - if @domain.dkim_retired_selector.present?
+    p.mt-2.text-xs.text-slate-500.dark:text-slate-400
+      ' Retired selector
+      code<>= @domain.dkim_retired_selector
+      ' still published for in-flight mail; it is revoked (empty p=) a week after rotation.
+  p.mt-2.text-xs.text-slate-500.dark:text-slate-400
+    ' Automatic rotation is off by default; set the
+    code<> dkim_rotation_days
+    ' setting to rotate on a schedule.
+
+h2.mb-2.text-lg.font-semibold BIMI brand logo
+.mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-4
+  - if @domain.bimi_svg.present?
+    .mb-3.flex.items-center.gap-3
+      img.h-10.w-10.rounded src="/bimi/#{@domain.name}/logo.svg" alt=""
+      .space-y-1.text-sm
+        .flex.gap-3
+          span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Name
+          code.break-all= @domain.bimi_txt_name
+        .flex.gap-3
+          span.w-12.shrink-0.pt-0.5.text-xs.text-slate-500.dark:text-slate-400 Value
+          code.break-all= @domain.bimi_txt_value(ENV["MAIL_ON_RAILS_WEB_HOST"].presence || "<set MAIL_ON_RAILS_WEB_HOST>")
+  = form_with model: @domain, class: "space-y-2" do |form|
+    = form.text_area :bimi_svg, rows: 3, placeholder: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">…</svg>",
+                     class: "w-full rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-950 px-3 py-2 font-mono text-xs"
+    .flex.items-center.gap-3
+      = form.submit @domain.bimi_svg.present? ? "Replace logo" : "Save logo", class: "cursor-pointer rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-slate-700 dark:text-slate-300"
+      span.text-xs.text-slate-500.dark:text-slate-400
+        ' Square, static SVG (Tiny-PS profile: no scripts, links, or external references), max 32 KB. Submitting empty removes it.
+  p.mt-2.text-xs.text-slate-500.dark:text-slate-400
+    ' Self-asserted BIMI: shown by Yahoo/AOL/Fastmail once DMARC is enforcing (p=quarantine or p=reject).
+    ' Gmail and Apple additionally require a paid VMC/CMC certificate, referenced from the record's a= tag.
+
+h2.mb-2.text-lg.font-semibold DMARC monitoring
+- advice_key, advice_text = @dmarc_advice
+- advice_colors = { publish: "bg-yellow-100 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-400", waiting: "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300",
+                    monitoring: "bg-yellow-100 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-400", ready: "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400",
+                    done: "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400" }
+.mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-4
+  .mb-2.flex.flex-wrap.items-center.gap-2
+    span.rounded-full.px-2.py-0.5.text-xs class=advice_colors[advice_key]
+      = advice_key.to_s.tr("_", " ")
+    - if @dns.dmarc_record
+      code.text-xs.text-slate-500.dark:text-slate-400= @dns.dmarc_record
+    - else
+      span.text-xs.text-slate-500.dark:text-slate-400 no _dmarc record found in DNS
+  p.text-sm= advice_text
+  - if @dmarc_stats[:total].positive?
+    .mt-3.flex.flex-wrap.gap-x-6.gap-y-1.text-sm.text-slate-600.dark:text-slate-300
+      span
+        strong= @dmarc_stats[:total]
+        '  messages / 30 days
+      span
+        strong= "#{@dmarc_stats[:aligned_pct].round(1)}%"
+        '  aligned
+      span
+        strong= @dmarc_stats[:sources]
+        '  source IPs
+      span
+        strong= @dmarc_stats[:reporters]
+        '  reporters
+    - if @dmarc_stats[:by_source].any?
+      .mt-3.overflow-x-auto
+        table.w-full.text-sm
+          thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+            tr
+              th.py-1.pr-4.font-normal Source IP
+              th.py-1.pr-4.font-normal.text-right Messages
+              th.py-1.pr-4.font-normal.text-right Aligned
+              th.py-1.pr-4.font-normal.text-right DKIM pass
+              th.py-1.pr-4.font-normal.text-right SPF pass
+              th.py-1.font-normal Dispositions
+          tbody
+            - @dmarc_stats[:by_source].first(15).each do |source|
+              - aligned = source[:passed] * 100.0 / source[:count]
+              tr.border-t.border-slate-100.dark:border-slate-800
+                td.py-1.pr-4: code= source[:ip]
+                td.py-1.pr-4.text-right.tabular-nums= source[:count]
+                td.py-1.pr-4.text-right.tabular-nums class=(aligned < 100 ? "text-red-700 dark:text-red-400 font-semibold" : "")
+                  = "#{aligned.round(1)}%"
+                td.py-1.pr-4.text-right.tabular-nums= source[:dkim_passed]
+                td.py-1.pr-4.text-right.tabular-nums= source[:spf_passed]
+                td.py-1.text-slate-500.dark:text-slate-400= source[:dispositions].join(", ")
+      - if @dmarc_stats[:by_source].size > 15
+        p.mt-1.text-xs.text-slate-500.dark:text-slate-400
+          = "and #{@dmarc_stats[:by_source].size - 15} more sources (sorted by volume)"
+      - if @dmarc_stats[:by_source].any? { |source| source[:passed] < source[:count] }
+        p.mt-2.text-xs.text-red-700.dark:text-red-400
+          ' Sources below 100% aligned need investigating before tightening
+          ' the policy: either they are yours (fix SPF/DKIM there) or
+          ' someone is spoofing the domain.
+
+h2.mb-2.text-lg.font-semibold TLS-RPT monitoring
+.mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-4
+  - if @tls_rpt_stats[:sessions].zero?
+    p.text-sm.text-slate-500.dark:text-slate-400
+      ' No TLS reports received in the last 30 days. Once the TLS-RPT
+      ' record above is published, providers that deliver mail here send
+      ' at most one report per day to
+      code<>= @domain.tls_rpt_address
+      ' , and it is parsed into the breakdown shown here.
+  - else
+    .flex.flex-wrap.gap-x-6.gap-y-1.text-sm.text-slate-600.dark:text-slate-300
+      span
+        strong= @tls_rpt_stats[:sessions]
+        '  sessions / 30 days
+      span
+        strong= "#{@tls_rpt_stats[:success_pct].round(1)}%"
+        '  negotiated TLS
+      span
+        strong= @tls_rpt_stats[:failed]
+        '  failed
+      span
+        strong= @tls_rpt_stats[:reporters]
+        '  reporters
+    - if @tls_rpt_stats[:failure_types].any?
+      .mt-2.text-sm.text-red-700.dark:text-red-400
+        ' Failure types (RFC 8460):
+        - @tls_rpt_stats[:failure_types].first(10).each do |result_type, count|
+          code.mr-2= "#{result_type} (#{count})"
+    - if @tls_rpt_reports.any?
+      .mt-3.overflow-x-auto
+        table.w-full.text-sm
+          thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+            tr
+              th.py-1.pr-4.font-normal Reporter
+              th.py-1.pr-4.font-normal Policy
+              th.py-1.pr-4.font-normal Window
+              th.py-1.pr-4.font-normal.text-right OK
+              th.py-1.font-normal.text-right Failed
+          tbody
+            - @tls_rpt_reports.each do |report|
+              tr.border-t.border-slate-100.dark:border-slate-800
+                td.py-1.pr-4= report.reporter
+                td.py-1.pr-4: code= report.policy_type
+                td.py-1.pr-4.whitespace-nowrap.text-slate-500.dark:text-slate-400
+                  = "#{report.begin_at.to_date} – #{report.end_at.to_date}"
+                td.py-1.pr-4.text-right.tabular-nums= report.success_count
+                td.py-1.text-right.tabular-nums class=(report.failure_count.positive? ? "text-red-700 dark:text-red-400 font-semibold" : "")
+                  = report.failure_count

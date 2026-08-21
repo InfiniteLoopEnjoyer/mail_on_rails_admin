@@ -1,0 +1,163 @@
+# examples:
+#   periodic_cleanup:
+#     class: CleanSoftDeletedRecordsJob
+#     queue: background
+#     args: [ 1000, { batch_size: 500 } ]
+#     schedule: every hour
+#   periodic_cleanup_with_command:
+#     command: "SoftDeletedRecord.due.delete_all"
+#     priority: 2
+#     schedule: at 5am every day
+
+development:
+  deliver_smtp_outbound:
+    class: MailOnRails::DeliverSmtpOutboundJob
+    schedule: "*/15 * * * * *" # every 15 seconds
+
+production:
+  deliver_smtp_outbound:
+    class: MailOnRails::DeliverSmtpOutboundJob
+    schedule: "*/15 * * * * *" # every 15 seconds
+
+  clear_solid_queue_finished_jobs:
+    command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
+    schedule: every hour at minute 12
+
+  # Scan-then-ingest dmarc@/tls-rpt@ mail that arrived while clamav was
+  # disabled (reports are never parsed without a clean scan).
+  scan_pending_reports:
+    class: MailOnRails::ScanPendingReportsJob
+    schedule: every hour at minute 41
+
+  # Authenticated writes (IMAP APPEND, web import, composer copies) fail
+  # open during a clamd outage and land as scan_status "unscanned", with
+  # attachment downloads locked. A scanner outage must not leave them
+  # that way forever; this gets every such row a real verdict.
+  rescan_unscanned_messages:
+    class: MailOnRails::RescanUnscannedMessagesJob
+    schedule: every hour at minute 35
+
+  # Auth throttle counters are only read for live windows and blocks; this
+  # keeps the table from growing without bound under a sustained attack.
+  prune_auth_throttles:
+    command: "MailOnRails::AuthThrottle.prune!"
+    schedule: every hour at minute 23
+
+  # Idle-expired sessions are refused at resume; this removes the rows.
+  prune_sessions:
+    command: "Session.prune!"
+    schedule: every day at 4:29am
+
+  # The attempt log's write rate is set by whoever is attacking, so its
+  # retention has to be enforced rather than assumed.
+  prune_auth_attempts:
+    command: "MailOnRails::AuthAttempt.prune!"
+    schedule: every day at 4:17am
+
+  # Same reasoning for the connection history behind /smtp and /imap:
+  # scanners set the write rate, retention is enforced daily.
+  prune_closed_connections:
+    command: "MailOnRails::ClosedConnection.prune!"
+    schedule: every day at 4:43am
+
+  # Captured session transcripts (smtp_trace_capture) hold real peers'
+  # envelope metadata, so their deliberately short retention is enforced
+  # daily; history rows keep a dangling transcript_id afterwards, which
+  # the UI reads as "no longer retained".
+  prune_session_transcripts:
+    command: "MailOnRails::SessionTranscript.prune!"
+    schedule: every day at 4:47am
+
+  # A botnet spread over many IPs can accumulate honeypot rows; retention is
+  # enforced daily past the long default window.
+  prune_honeypot_events:
+    command: "MailOnRails::HoneypotEvent.prune!"
+    schedule: every day at 4:45am
+
+  # The per-IP attribution cache behind the live connection pages grows a
+  # row per address ever displayed; a scanner-heavy day sets that rate, so
+  # retention is enforced. Addresses still on the pages re-resolve on read.
+  prune_ip_enrichments:
+    command: "MailOnRails::IpEnrichment.prune!"
+    schedule: every day at 5:27am
+
+  # Yesterday's outbound TLS outcomes, reported to every recipient
+  # domain that publishes a TLS-RPT policy (RFC 8460).
+  send_tls_rpt_reports:
+    class: MailOnRails::SendTlsRptReportsJob
+    schedule: every day at 1:10am
+
+  # Reports only ever look one day back; the event log's write rate is
+  # set by outbound volume, so retention is enforced daily.
+  prune_tls_rpt_events:
+    command: "MailOnRails::TlsRptEvent.prune!"
+    schedule: every day at 4:57am
+
+  # Yesterday's inbound DMARC evaluations, rolled into RFC 7489 aggregate
+  # reports for every policy domain that asks via rua= on its _dmarc record.
+  send_dmarc_reports:
+    class: MailOnRails::SendDmarcReportsJob
+    schedule: every day at 1:20am
+
+  # Same one-day-lookback reasoning as the TLS-RPT events: the write rate
+  # is set by inbound volume, retention is enforced daily.
+  prune_dmarc_aggregate_events:
+    command: "MailOnRails::DmarcAggregateEvent.prune!"
+    schedule: every day at 5:15am
+
+  # DKIM rotation lifecycle: promote staged keys whose TXT is now visible
+  # in public DNS, auto-stage when dkim_rotation_days says a key is due,
+  # revoke retired selectors past the grace week.
+  rotate_dkim_keys:
+    class: MailOnRails::RotateDkimKeysJob
+    schedule: every day at 2:10am
+
+  # BIMI indicator rows for sender domains the webmail stopped asking
+  # about; the live cache refreshes itself per lookup.
+  prune_bimi_indicators:
+    command: "MailOnRails::BimiIndicator.prune!"
+    schedule: every day at 5:21am
+
+  # Parsed report rows (dmarc@/tls-rpt@ ingestion) have their write rate
+  # set by external reporters, so retention is enforced daily - well past
+  # the 30-day stats window; the raw report mail stays in its mailbox.
+  prune_dmarc_reports:
+    command: "MailOnRails::DmarcReport.prune!"
+    schedule: every day at 5:03am
+
+  prune_tls_rpt_reports:
+    command: "MailOnRails::TlsRptReport.prune!"
+    schedule: every day at 5:09am
+
+  # Vacation claim rows past the reply window no longer suppress
+  # anything; the write rate is set by whoever mails the vacationing
+  # account, so retention is enforced rather than assumed.
+  prune_vacation_replies:
+    command: "MailOnRails::VacationReply.prune!"
+    schedule: every day at 4:51am
+
+  # Refresh the cached MX/SPF/DKIM/DMARC statuses behind the domains
+  # index pills (Domain#dns_checks). The domain page still checks live on
+  # every view and writes through to the same cache.
+  refresh_dns_checks:
+    class: MailOnRails::DnsCheckRefreshJob
+    schedule: every hour at minute 52
+
+  # Keep the imported Spamhaus DROP netblocks (BannedIp) current; manual
+  # bans are untouched.
+  refresh_spamhaus_drop:
+    class: MailOnRails::SpamhausDropRefreshJob
+    schedule: every day at 2:37am
+
+  # Trash is the only folder with a retention limit (Setting
+  # .trash_retention_days, adjustable on /settings); everything else is
+  # kept forever.
+  purge_trash:
+    class: MailOnRails::PurgeTrashJob
+    schedule: every day at 3:07am
+
+  # Nightly pg_dump of the primary database onto the persistent storage
+  # volume, pruned to DB_BACKUP_KEEP_DAYS. Restore runbook: docs/backups.md.
+  database_backup:
+    class: DatabaseBackupJob
+    schedule: every day at 1:30am

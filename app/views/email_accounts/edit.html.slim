@@ -1,0 +1,17 @@
+- page_title "Edit #{@email_account.email}"
+
+nav.mb-2.text-sm.text-slate-500.dark:text-slate-400
+  =<> link_to "Accounts", root_path, class: "text-accent"
+  | /
+  =<> link_to @email_account.email, email_account_path(@email_account), class: "text-accent"
+  | /
+  span<> Edit
+
+header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
+  h1.text-2xl.font-bold Edit Email Account
+
+= render "form", email_account: @email_account
+
+.mt-6.max-w-lg.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-5
+  h2.mb-3.text-sm.font-semibold Password
+  = render "shared/password_generator", url: generate_password_email_account_path(@email_account), password: flash[:generated_password]

@@ -1,0 +1,29 @@
+- page_title "Confirm your identity"
+
+.mx-auto.mt-16.max-w-md
+  h1.mb-4.text-2xl.font-bold Confirm your identity
+
+  = render "shared/flash"
+
+  p.mb-4.text-sm.text-slate-600.dark:text-slate-300
+    ' For your security, confirm it's you before changing two-factor methods.
+
+  .mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-5
+    = form_with url: reauthentication_path, method: :post do |form|
+      .mb-3
+        = form.password_field :password, required: true, autofocus: true, autocomplete: "current-password", placeholder: "Your password", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+      = form.submit "Confirm", class: "inline-block cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white"
+
+  - if Current.user.webauthn_credentials.exists?
+    .mb-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-5 data-controller="webauthn" data-webauthn-options-url-value=webauthn_options_reauthentication_path data-webauthn-verify-url-value=webauthn_reauthentication_path
+      p.mb-3.text-sm.text-slate-600.dark:text-slate-300 Or use your passkey.
+      button.inline-block.cursor-pointer.rounded-md.border.border-accent.bg-accent.px-3.5.py-1.text-sm.font-medium.text-white type="button" data-action="webauthn#authenticate" Use passkey
+      p.mt-2.text-sm.text-red-700.dark:text-red-400 hidden=true data-webauthn-target="error"
+
+  - if Current.user.otp_enabled?
+    .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.p-5
+      = form_with url: totp_reauthentication_path do |form|
+        p.mb-3.text-sm.text-slate-600.dark:text-slate-300 Or enter the 6-digit code from your authenticator app.
+        .mb-4
+          = form.text_field :code, required: true, autocomplete: "one-time-code", inputmode: "numeric", maxlength: 7, placeholder: "123 456", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+        = form.submit "Confirm", class: "inline-block cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white"

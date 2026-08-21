@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+
+# Everything runs in the one Puma process (config/puma.rb boots Solid
+# Queue and the mail_on_rails SMTP/IMAP servers as plugins in
+# development), so dev is just the Rails server - no foreman/Procfile.
+
+# Default to port 3000 if not specified
+export PORT="${PORT:-3000}"
+
+# Let the debug gem allow remote connections,
+# but avoid loading until `debugger` is called
+export RUBY_DEBUG_OPEN="true"
+export RUBY_DEBUG_LAZY="true"
+
+exec ./bin/rails server "$@"

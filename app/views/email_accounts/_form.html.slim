@@ -1,0 +1,68 @@
+= form_with model: email_account, class: "max-w-lg rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5" do |form|
+  - if email_account.errors.any?
+    .mb-4.rounded-md.bg-red-100.dark:bg-red-950.px-3.py-2.text-sm.text-red-700.dark:text-red-400
+      ul.list-disc.pl-4
+        - email_account.errors.full_messages.each do |message|
+          li= message
+
+  .mb-4
+    = form.label :email, class: "mb-1 block text-sm font-semibold"
+    = form.email_field :email, required: true, autofocus: email_account.new_record?, class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+
+  .mb-4
+    = form.label :name, "Display name", class: "mb-1 block text-sm font-semibold"
+    = form.text_field :name, class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+
+  .mb-4
+    = form.label :quota_megabytes, "Storage quota (MB)", class: "mb-1 block text-sm font-semibold"
+    = form.number_field :quota_megabytes, min: 1, step: 1, placeholder: "Unlimited", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+    p.mt-1.text-xs.text-slate-500.dark:text-slate-400 Leave blank for no limit. New mail is refused once the account is full.
+
+  fieldset.mb-4.rounded-md.border.border-slate-200.dark:border-slate-800.p-3
+    legend.px-1.text-sm.font-semibold Mailing list
+    .flex.items-center.gap-2
+      = form.check_box :mailing_list, class: "size-4 accent-accent"
+      = form.label :mailing_list, "This account sends mailing-list mail", class: "text-sm"
+    p.mt-1.text-xs.text-slate-500.dark:text-slate-400
+      ' Everything this account sends is treated as list mail: outbound
+      ' messages get a List-ID plus List-Unsubscribe / one-click
+      ' unsubscribe headers (the Gmail/Yahoo bulk-sender requirement).
+      ' Recipients who unsubscribe stop receiving this account's mail
+      ' only; leave unchecked for personal accounts.
+
+  fieldset.mb-4.rounded-md.border.border-amber-200.dark:border-amber-900.bg-amber-50.dark:bg-amber-950.p-3
+    legend.px-1.text-sm.font-semibold.text-amber-800.dark:text-amber-300 Honeypot
+    .flex.items-center.gap-2
+      = form.check_box :honeypot, class: "size-4 accent-accent"
+      = form.label :honeypot, "Use as a canary (decoy) account", class: "text-sm"
+    p.mt-1.text-xs.text-amber-700.dark:text-amber-400
+      ' No real user should own this. Any successful login is treated as an
+      ' attacker: it is recorded with a session transcript, any mail it submits
+      ' is blackholed, and the source is temporarily throttled (unless the
+      ' address is allowlisted or shared with a real user). See the Honeypot page.
+
+  fieldset.mb-4.rounded-md.border.border-slate-200.dark:border-slate-800.p-3
+    legend.px-1.text-sm.font-semibold Vacation auto-reply
+    .mb-3.flex.items-center.gap-2
+      = form.check_box :vacation_enabled, class: "size-4 accent-accent"
+      = form.label :vacation_enabled, "Send automatic replies", class: "text-sm"
+    .mb-3
+      = form.label :vacation_subject, "Reply subject", class: "mb-1 block text-sm font-semibold"
+      = form.text_field :vacation_subject, placeholder: "Automatic reply", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+    .mb-3
+      = form.label :vacation_body, "Reply message", class: "mb-1 block text-sm font-semibold"
+      = form.text_area :vacation_body, rows: 4, class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+    .grid.grid-cols-2.gap-3
+      div
+        = form.label :vacation_starts_on, "From", class: "mb-1 block text-sm font-semibold"
+        = form.date_field :vacation_starts_on, class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+      div
+        = form.label :vacation_ends_on, "Until", class: "mb-1 block text-sm font-semibold"
+        = form.date_field :vacation_ends_on, class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5"
+    p.mt-2.text-xs.text-slate-500.dark:text-slate-400 Each sender is answered once a week. Blank dates mean the reply runs whenever it is enabled.
+
+  - if email_account.new_record?
+    p.mb-4.text-xs.text-slate-500.dark:text-slate-400 A password will be generated when the account is created.
+
+  .mt-5
+    = form.submit class: "inline-block cursor-pointer rounded-md border border-accent bg-accent px-3.5 py-1 text-sm font-medium text-white"
