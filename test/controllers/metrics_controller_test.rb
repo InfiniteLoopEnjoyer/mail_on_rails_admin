@@ -59,6 +59,7 @@ class MetricsControllerTest < ActionDispatch::IntegrationTest
     assert_includes body, "mail_on_rails_messages 1"
     assert_match(/mail_on_rails_storage_used_bytes [1-9]\d*/, body)
     assert_includes body, %(mail_on_rails_live_connections{protocol="smtp"} 0)
+    assert_includes body, %(mail_on_rails_listener_up{protocol="smtp"} 0)
     assert_includes body, "# TYPE mail_on_rails_outbound_queue gauge"
   end
 

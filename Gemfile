@@ -106,4 +106,10 @@ gem "lexxy", "~> 0.9"
 # delivery, report handling). Extracted from this app; https so Docker
 # builds and CI need no credentials (public repo). Pinned by revision in
 # Gemfile.lock - `bundle update mail_on_rails` to pull gem changes.
-gem "mail_on_rails", git: "https://github.com/InfiniteLoopEnjoyer/mail_on_rails.git", branch: "main"
+gem "mail_on_rails",      git: "https://github.com/InfiniteLoopEnjoyer/mail_on_rails.git",      branch: "main"
+# The protocol servers are separate gems; each registers itself with the
+# core runtime when loaded. Drop one to run without that protocol. Bump
+# the three together (`bundle update mail_on_rails mail_on_rails_smtp
+# mail_on_rails_imap`) - they move in lockstep.
+gem "mail_on_rails_smtp", git: "https://github.com/InfiniteLoopEnjoyer/mail_on_rails_smtp.git", branch: "main"
+gem "mail_on_rails_imap", git: "https://github.com/InfiniteLoopEnjoyer/mail_on_rails_imap.git", branch: "main"

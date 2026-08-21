@@ -1,17 +1,26 @@
 #!/bin/bash
 set -e
 
-# Kamal boots new containers before stopping old ones. This service
-# publishes host ports (25/587/465/143/993 for the in-process mail
-# listeners), so a new container can't bind while its predecessor runs -
-# stop the old one first. Costs a short full outage per deploy (Puma's
-# stop hooks drain mail sessions; SMTP senders retry, IMAP clients
-# reconnect, the web UI is back once /up turns healthy).
+# Kamal boots new containers before stopping old ones. The smtp and imap
+# roles publish host ports (25/587/465 and 143/993), so a new mail
+# container can't bind while its predecessor runs - stop the old ones
+# first. Costs a short mail-only outage per deploy (bin/mail_server drains
+# sessions on TERM; SMTP senders retry, IMAP clients reconnect). The web
+# role is left alone: it sits behind kamal-proxy and rolls with zero
+# downtime.
+#
+# Containers are matched by kamal's own labels (service + role), so an
+# all-in-one web role that publishes the mail ports itself
+# (MAIL_ON_RAILS_SERVERS: smtp,imap) must be added to MAIL_ROLES below.
 
 [ "$KAMAL_SERVICE" = "mail_on_rails" ] || exit 0
 
+MAIL_ROLES="${MAIL_ROLES:-smtp imap}"
+
 IFS=',' read -ra HOSTS <<< "$KAMAL_HOSTS"
 for host in "${HOSTS[@]}"; do
-  ssh "root@$host" "docker ps -q --filter label=service=$KAMAL_SERVICE | xargs -r docker stop" \
-      && echo "Stopped old $KAMAL_SERVICE container on $host (freeing its ports)"
+  for role in $MAIL_ROLES; do
+    ssh "root@$host" "docker ps -q --filter label=service=$KAMAL_SERVICE --filter label=role=$role | xargs -r docker stop" \
+        && echo "Stopped old $KAMAL_SERVICE $role container(s) on $host (freeing their ports)"
+  done
 done

@@ -23,10 +23,12 @@ class BannedIpsController < ApplicationController
 
     if banned_ip.save
       audit "banned_ip.create", banned_ip, note: banned_ip.note
-      kicked = kick_live_connections(banned_ip)
-      notice = [ "Banned #{banned_ip.cidr}.",
-                 ("Dropped #{kicked} live #{"connection".pluralize(kicked)}." if kicked.positive?) ].compact.join(" ")
-      redirect_back_to_attempts notice: notice
+      # The ban row is the whole command: every mail listener (in this
+      # process or another container) reloads its denylist and drops the
+      # address's live connections on its next ops-sync tick, a couple of
+      # seconds at most - no in-process handle needed.
+      redirect_back_to_attempts notice:
+        "Banned #{banned_ip.cidr}. New connections are refused immediately; its live connections are dropped within a few seconds."
     else
       redirect_back_to_attempts alert:
         "Ban not added: #{banned_ip.errors.full_messages.to_sentence}."
@@ -52,21 +54,6 @@ class BannedIpsController < ApplicationController
     banned_ip.covers_addr?(addr)
   rescue IPAddr::Error
     false
-  end
-
-  # The mail servers run inside this very process (the :mail_on_rails
-  # Puma plugin), so a new ban can also drop the address's live
-  # connections - the accept-side denylists only silence future ones, and
-  # an established IMAP IDLE would otherwise outlive the ban by up to its
-  # 1800s idle timeout. A no-server boot (tests, plain `rails server`)
-  # just kicks nothing.
-  def kick_live_connections(banned_ip)
-    require "mail_on_rails"
-    MailOnRails.kick_connections do |ip|
-      banned_ip.covers_addr?(IPAddr.new(ip))
-    rescue IPAddr::Error
-      false
-    end
   end
 
   # The actions live as buttons on the auth attempts index, its range

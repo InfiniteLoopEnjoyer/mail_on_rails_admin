@@ -1,6 +1,6 @@
 require "test_helper"
 require "zlib"
-require "mail_on_rails/smtp/sender_auth/dns"
+require "mail_on_rails/sender_auth/dns"
 
 # The daily RFC 8460 rollup: yesterday's TlsRptEvents become one gzipped
 # JSON report per recipient domain that asks for one via its TLSRPT

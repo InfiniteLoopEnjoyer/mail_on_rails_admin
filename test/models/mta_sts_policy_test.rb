@@ -13,7 +13,7 @@ class MtaStsPolicyTest < ActiveSupport::TestCase
 
     def txt(name)
       value = @txt.fetch(name, [])
-      raise MailOnRails::Smtp::SenderAuth::Dns::TempError, "boom" if value == :temperror
+      raise MailOnRails::SenderAuth::Dns::TempError, "boom" if value == :temperror
 
       value
     end

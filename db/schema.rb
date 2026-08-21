@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_20_070000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -74,6 +74,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_20_070000) do
     t.index ["email_account_id"], name: "index_email_account_users_on_email_account_id"
     t.index ["user_id", "email_account_id"], name: "index_email_account_users_on_user_id_and_email_account_id", unique: true
     t.index ["user_id"], name: "index_email_account_users_on_user_id"
+  end
+
+  create_table "mail_on_rails_accept_lockouts", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "ip", null: false
+    t.string "listener_id", null: false
+    t.datetime "locked_until", null: false
+    t.string "protocol", null: false
+    t.datetime "updated_at", null: false
+    t.index ["listener_id", "ip"], name: "index_accept_lockouts_on_listener_and_ip", unique: true
+    t.index ["protocol", "locked_until"], name: "index_accept_lockouts_on_protocol_and_locked_until"
   end
 
   create_table "mail_on_rails_auth_attempts", force: :cascade do |t|
@@ -152,6 +163,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_20_070000) do
     t.index ["protocol", "closed_at"], name: "idx_on_protocol_closed_at_305bc62ee1"
     t.index ["protocol", "ip", "closed_at"], name: "idx_on_protocol_ip_closed_at_4886299b1c"
     t.index ["protocol", "ip", "closed_at"], name: "index_closed_connections_on_rollup_key", unique: true, where: "rollup"
+  end
+
+  create_table "mail_on_rails_connection_kicks", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "expires_at", null: false
+    t.string "ip", null: false
+    t.integer "kicked_count"
+    t.datetime "processed_at"
+    t.string "processed_by"
+    t.string "protocol", null: false
+    t.string "requested_by"
+    t.datetime "updated_at", null: false
+    t.index ["protocol", "processed_at", "expires_at"], name: "index_connection_kicks_on_protocol_pending"
   end
 
   create_table "mail_on_rails_dmarc_aggregate_events", force: :cascade do |t|
@@ -317,6 +341,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_20_070000) do
     t.index ["updated_at"], name: "index_ip_enrichments_on_updated_at"
   end
 
+  create_table "mail_on_rails_listeners", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "heartbeat_at", null: false
+    t.string "hostname"
+    t.string "listener_id", null: false
+    t.integer "max_connections"
+    t.integer "pid"
+    t.jsonb "ports"
+    t.string "protocol", null: false
+    t.boolean "ready", default: false, null: false
+    t.datetime "started_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["listener_id"], name: "index_listeners_on_listener_id", unique: true
+    t.index ["protocol", "heartbeat_at"], name: "index_listeners_on_protocol_and_heartbeat_at"
+  end
+
   create_table "mail_on_rails_mailboxes", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "email_account_id", null: false
@@ -340,6 +380,27 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_20_070000) do
     t.string "sts_id", null: false
     t.datetime "updated_at", null: false
     t.index ["domain"], name: "index_mail_on_rails_mta_sts_policies_on_domain", unique: true
+  end
+
+  create_table "mail_on_rails_open_connections", force: :cascade do |t|
+    t.datetime "connected_at", null: false
+    t.bigint "connection_id", null: false
+    t.datetime "created_at", null: false
+    t.string "helo"
+    t.string "listener_id", null: false
+    t.integer "messages"
+    t.string "peer_ip"
+    t.integer "port"
+    t.string "protocol", null: false
+    t.string "role"
+    t.string "state"
+    t.float "tarpit"
+    t.boolean "tls"
+    t.datetime "updated_at", null: false
+    t.string "username"
+    t.index ["listener_id", "connection_id"], name: "index_open_connections_on_listener_and_connection", unique: true
+    t.index ["peer_ip"], name: "index_open_connections_on_peer_ip"
+    t.index ["protocol", "connected_at"], name: "index_open_connections_on_protocol_and_connected_at"
   end
 
   create_table "mail_on_rails_session_transcripts", force: :cascade do |t|

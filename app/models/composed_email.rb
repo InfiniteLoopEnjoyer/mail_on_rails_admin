@@ -1,6 +1,6 @@
 require "mail_on_rails/clamav_scanner"
 require "mail_on_rails/rspamd_analyzer"
-require "mail_on_rails/smtp/send_quota"
+require "mail_on_rails/send_quota"
 
 # An email composed in the web UI. deliver builds the RFC822 message and
 # routes each recipient the same way the SMTP edge would: local addresses
@@ -238,7 +238,7 @@ class ComposedEmail
   # by the account email - the same key authenticated SMTP sessions use -
   # so web and SMTP submission draw from one budget.
   def send_quota
-    defined?(@send_quota) ? @send_quota : MailOnRails::Smtp::SendQuota.shared
+    defined?(@send_quota) ? @send_quota : MailOnRails::SendQuota.shared
   end
 
   def consume_send_quota

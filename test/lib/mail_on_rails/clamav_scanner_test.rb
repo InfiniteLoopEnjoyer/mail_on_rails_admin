@@ -21,12 +21,12 @@ class ClamavScannerTest < ActiveSupport::TestCase
   test "disabled until an address is configured, matching the SMTP edge" do
     with_scanner_at(nil) do
       assert_not MailOnRails::ClamavScanner.enabled?
-      assert_equal MailOnRails::Smtp::ClamavClient.enabled?, MailOnRails::ClamavScanner.enabled?
+      assert_equal MailOnRails::ClamavClient.enabled?, MailOnRails::ClamavScanner.enabled?
     end
     with_scanner_at("") { assert_not MailOnRails::ClamavScanner.enabled? }
     with_scanner_at("127.0.0.1:3310") do
       assert MailOnRails::ClamavScanner.enabled?
-      assert_equal MailOnRails::Smtp::ClamavClient.enabled?, MailOnRails::ClamavScanner.enabled?
+      assert_equal MailOnRails::ClamavClient.enabled?, MailOnRails::ClamavScanner.enabled?
     end
   end
 

@@ -1,17 +1,33 @@
-/ Everything a refresh re-renders: stat tiles plus the connection
-/ table. The controller snapshotted all state; this renders plain values.
-- if @server.nil?
+/ Everything a refresh re-renders: listener status, stat tiles, the
+/ connection table. The controller read all of it from the ops tables the
+/ listeners project into (Listener / OpenConnection / AcceptLockout), so
+/ this renders the same whether the servers run in this process or in
+/ their own containers.
+- if @listeners.empty?
   section.rounded-lg.border.border-amber-200.dark:border-amber-900.bg-amber-50.dark:bg-amber-950.px-4.py-3
     p.text-sm.text-amber-800.dark:text-amber-300
-      | The #{controller_name.upcase} server is not running in this process.
-      '  It boots with Puma in development, and in deploys with
-      '  MAIL_ON_RAILS_SERVERS=true (the production web role).
+      | No #{controller_name.upcase} server is running (or none has reported in
+      '  for #{MailOnRails::Listener.stale_after}s). Listeners report
+      '  themselves here every few seconds from whichever process runs
+      '  them - this one (MAIL_ON_RAILS_SERVERS / the Puma plugin) or the
+      '  smtp/imap containers (bin/mail_server).
 - else
-  - authenticated = @connections.count { |conn| conn[:user] }
-  - sources = @connections.map { |conn| conn[:peer_ip] }.compact.uniq.size
-  - third = controller_name == "imap" ? ["Idling", @connections.count { |conn| conn[:state].to_s.start_with?("IDLE") }] : ["TLS", @connections.count { |conn| conn[:tls] }]
+  section.mb-3.flex.flex-wrap.items-center.gap-2.text-xs.text-slate-600.dark:text-slate-300
+    - @listeners.each do |listener|
+      span.inline-flex.items-center.gap-1.rounded-full.border.border-emerald-200.dark:border-emerald-900.bg-emerald-50.dark:bg-emerald-950.px-2.py-0.5 title="listener #{listener.listener_id}, started #{listener.started_at.strftime("%Y-%m-%d %H:%M:%S")}, last heartbeat #{time_ago_in_words(listener.heartbeat_at)} ago"
+        span.h-2.w-2.rounded-full class=(listener.ready? ? "bg-emerald-500" : "bg-amber-500")
+        = "#{controller_name.upcase} #{listener.ready? ? "up" : "binding"}"
+        span.text-slate-500.dark:text-slate-400
+          = "· ports #{Array(listener.ports).join("/")}"
+          - if listener.hostname.present?
+            = " · #{listener.hostname}"
+          - if listener.pid
+            = " · pid #{listener.pid}"
+  - authenticated = @connections.count { |conn| conn.username.present? }
+  - sources = @connections.map(&:peer_ip).compact.uniq.size
+  - third = controller_name == "imap" ? ["Idling", @connections.count { |conn| conn.state.to_s.start_with?("IDLE") }] : ["TLS", @connections.count(&:tls)]
   section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
-    - [["Connections", "#{@connections.size} / #{@server.max_connections}"], ["Authenticated", authenticated], third, ["Source addresses", sources]].each do |label, value|
+    - [["Connections", "#{@connections.size} / #{@max_connections}"], ["Authenticated", authenticated], third, ["Source addresses", sources]].each do |label, value|
       .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
         .text-xs.text-slate-500.dark:text-slate-400= label
         .text-2xl.font-bold= value
@@ -39,27 +55,27 @@
           - @connections.each do |conn|
             tr.border-t.border-slate-100.dark:border-slate-800
               td.px-4.py-1.5.font-mono.break-all
-                = conn[:peer_ip] || "?"
-                - if conn[:tarpit].to_f.positive?
-                  span.ml-1.rounded.bg-amber-100.dark:bg-amber-900.px-1.py-0.5.font-sans.text-xs.text-amber-800.dark:text-amber-300 title="This connection was delayed #{conn[:tarpit].round}s by the connection rate limiter before its banner."
-                    = "tarpit #{conn[:tarpit].round}s"
-                = render "ip_meta", ip: conn[:peer_ip]
+                = conn.peer_ip || "?"
+                - if conn.tarpit.to_f.positive?
+                  span.ml-1.rounded.bg-amber-100.dark:bg-amber-900.px-1.py-0.5.font-sans.text-xs.text-amber-800.dark:text-amber-300 title="This connection was delayed #{conn.tarpit.round}s by the connection rate limiter before its banner."
+                    = "tarpit #{conn.tarpit.round}s"
+                = render "ip_meta", ip: conn.peer_ip
               td.px-4.py-1.5.text-slate-600.dark:text-slate-300
-                = conn[:port]
-                - if conn[:role]
-                  span.ml-1.text-xs.text-slate-500.dark:text-slate-400= conn[:role]
-              td.px-4.py-1.5.text-slate-600.dark:text-slate-300= conn[:tls] ? "✓" : "-"
-              td.px-4.py-1.5.font-mono.break-all= conn[:user] || "-"
+                = conn.port
+                - if conn.role
+                  span.ml-1.text-xs.text-slate-500.dark:text-slate-400= conn.role
+              td.px-4.py-1.5.text-slate-600.dark:text-slate-300= conn.tls ? "✓" : "-"
+              td.px-4.py-1.5.font-mono.break-all= conn.username || "-"
               - if controller_name == "smtp"
-                td.px-4.py-1.5.font-mono.break-all.text-slate-600.dark:text-slate-300= conn[:helo] || "-"
-                td.px-4.py-1.5.text-right.tabular-nums.text-slate-600.dark:text-slate-300= conn[:messages] || "-"
+                td.px-4.py-1.5.font-mono.break-all.text-slate-600.dark:text-slate-300= conn.helo || "-"
+                td.px-4.py-1.5.text-right.tabular-nums.text-slate-600.dark:text-slate-300= conn.messages || "-"
               - else
-                td.px-4.py-1.5.text-slate-600.dark:text-slate-300= conn[:state] || "connecting"
-              td.px-4.py-1.5.text-slate-600.dark:text-slate-300 title=conn[:connected_at].strftime("%H:%M:%S")
-                = time_ago_in_words(conn[:connected_at])
+                td.px-4.py-1.5.text-slate-600.dark:text-slate-300= conn.state || "connecting"
+              td.px-4.py-1.5.text-slate-600.dark:text-slate-300 title=conn.connected_at.strftime("%H:%M:%S")
+                = time_ago_in_words(conn.connected_at)
               td.px-4.py-1.5.text-right
-                - if conn[:peer_ip]
-                  = render "auth_attempts/ban_button", target: conn[:peer_ip], origin: controller_name, confirm: "Ban #{conn[:peer_ip]}? Its live connections are dropped and it loses SMTP, IMAP and web login access."
+                - if conn.peer_ip
+                  = render "auth_attempts/ban_button", target: conn.peer_ip, origin: controller_name, confirm: "Ban #{conn.peer_ip}? Its live connections are dropped and it loses SMTP, IMAP and web login access."
     - else
       p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 No live connections.
 

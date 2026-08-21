@@ -16,11 +16,13 @@ jobs:
   # their runners live in the mail_on_rails gem's own CI now.
 
   # Trivy (scan_image) proves the image builds and its packages are clean;
-  # this proves the artifact actually RUNS: entrypoint migrations against a
-  # real postgres over the production socket path, Puma + the in-process
-  # SMTP/IMAP listeners, and /up - which stays down until the mail ports
-  # are bound (MAIL_ON_RAILS_SERVERS), so a green check covers every
-  # protocol's boot, not just HTTP.
+  # this proves the artifact actually RUNS, in both deploy shapes:
+  # entrypoint migrations against a real postgres over the production
+  # socket path, Puma with the in-process SMTP/IMAP listeners
+  # (MAIL_ON_RAILS_SERVERS=smtp,imap - /up stays down until the mail ports
+  # are bound), and then the split shape: a web-only container (/up must
+  # be 200 with no listeners) next to a bin/mail_server container that
+  # must heartbeat into the ops tables the web UI reads.
   boot_smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -75,7 +77,7 @@ jobs:
             -e POSTGRES_PASSWORD=smoke \
             -e SECRET_KEY_BASE="$(openssl rand -hex 64)" \
             -e MAIL_ON_RAILS_WEB_HOST=smoke.local \
-            -e MAIL_ON_RAILS_SERVERS=true \
+            -e MAIL_ON_RAILS_SERVERS=smtp,imap \
             -e MAIL_ON_RAILS_TLS_CERT=/tls/cert.pem \
             -e MAIL_ON_RAILS_TLS_KEY=/tls/key.pem \
             -e SMTP_TLS_CERT=/tls/cert.pem \
@@ -97,10 +99,60 @@ jobs:
           cat /tmp/up.body 2>/dev/null
           exit 1
 
+      # The production shape: web without listeners, mail in its own
+      # container. Both share the postgres socket; the mail container runs
+      # the same image with bin/mail_server (no db:prepare - web did it).
+      - name: Boot a web-only container and a standalone mail container
+        run: |
+          docker stop smoke-app && docker rm smoke-app
+          docker run -d --name smoke-web -p 8080:80 \
+            -v "$RUNNER_TEMP/pgsocket:/postgres/socket" \
+            -e POSTGRES_DB=mail_on_rails_production \
+            -e POSTGRES_USER=mail_on_rails \
+            -e POSTGRES_PASSWORD=smoke \
+            -e SECRET_KEY_BASE="$(openssl rand -hex 64)" \
+            -e MAIL_ON_RAILS_WEB_HOST=smoke.local \
+            -e MAIL_ON_RAILS_SERVERS=0 \
+            mail_on_rails:ci
+          docker run -d --name smoke-mail \
+            -v "$RUNNER_TEMP/pgsocket:/postgres/socket" \
+            -v "$RUNNER_TEMP/tls:/tls:ro" \
+            -e POSTGRES_DB=mail_on_rails_production \
+            -e POSTGRES_USER=mail_on_rails \
+            -e POSTGRES_PASSWORD=smoke \
+            -e SECRET_KEY_BASE="$(openssl rand -hex 64)" \
+            -e MAIL_ON_RAILS_WEB_HOST=smoke.local \
+            -e MAIL_ON_RAILS_TLS_CERT=/tls/cert.pem \
+            -e MAIL_ON_RAILS_TLS_KEY=/tls/key.pem \
+            -e SMTP_TLS_CERT=/tls/cert.pem \
+            -e SMTP_TLS_KEY=/tls/key.pem \
+            -e SMTP_CLAMAV_OPTIONAL=1 \
+            mail_on_rails:ci ./bin/mail_server --protocols smtp imap
+
+      - name: Web-only /up is healthy without listeners; the mail container heartbeats
+        run: |
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /tmp/up.body -w '%{http_code}' http://localhost:8080/up || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          [ "$code" = "200" ] || { echo "web-only /up never turned healthy (last status: ${code:-none})" >&2; exit 1; }
+          for _ in $(seq 1 30); do
+            if docker exec smoke-mail bin/rails runner 'exit(MailOnRails::Listener.alive(:smtp).any? && MailOnRails::Listener.alive(:imap).any? ? 0 : 1)' 2>/dev/null; then
+              echo "both listeners heartbeat into the ops tables"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the mail container never heartbeated" >&2
+          exit 1
+
       - name: Dump container logs on failure
         if: failure()
         run: |
           docker logs smoke-app 2>&1 || true
+          docker logs smoke-web 2>&1 || true
+          docker logs smoke-mail 2>&1 || true
           docker logs smoke-pg 2>&1 || true
 
   test:

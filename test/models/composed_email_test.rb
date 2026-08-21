@@ -1,6 +1,6 @@
 require "test_helper"
 require "mail_on_rails/clamav_scanner"
-require "mail_on_rails/smtp/send_quota"
+require "mail_on_rails/send_quota"
 require_relative "../test_helpers/clamav_stub_helper"
 require_relative "../test_helpers/rspamd_stub_helper"
 
@@ -73,7 +73,7 @@ class ComposedEmailTest < ActiveSupport::TestCase
   end
 
   def quota(limit:)
-    MailOnRails::Smtp::SendQuota.new(limit: limit, window: 3600)
+    MailOnRails::SendQuota.new(limit: limit, window: 3600)
   end
 
   test "an exhausted send quota refuses the message and delivers nowhere" do

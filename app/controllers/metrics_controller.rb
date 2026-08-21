@@ -98,8 +98,11 @@ class MetricsController < ApplicationController
          [ [ {}, MailOnRails::EmailAccount.sum(:used_bytes) ] ]
 
     emit out, "mail_on_rails_live_connections", :gauge,
-         "Open connections on the in-process mail listeners.",
-         %i[smtp imap].map { |proto| [ { protocol: proto }, live_connections(proto) ] }
+         "Open connections on the mail listeners (every process; from the ops tables).",
+         %i[smtp imap].map { |proto| [ { protocol: proto }, MailOnRails::OpenConnection.live(proto).count ] }
+    emit out, "mail_on_rails_listener_up", :gauge,
+         "Number of running listeners for the protocol that heartbeated within ops_stale_after seconds.",
+         %i[smtp imap].map { |proto| [ { protocol: proto }, MailOnRails::Listener.alive(proto).size ] }
 
     # Only when rspamd is configured - a hardwired 0 on setups that never
     # enabled it would page about a service that isn't supposed to exist.
@@ -121,10 +124,5 @@ class MetricsController < ApplicationController
       rendered = labels.map { |k, v| "#{k}=\"#{v}\"" }.join(",")
       out << "#{name}#{rendered.empty? ? "" : "{#{rendered}}"} #{value}\n"
     end
-  end
-
-  def live_connections(protocol)
-    require "mail_on_rails"
-    MailOnRails.server(protocol)&.connections&.size || 0
   end
 end

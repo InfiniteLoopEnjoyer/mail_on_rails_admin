@@ -1,5 +1,5 @@
 require "test_helper"
-require "mail_on_rails/smtp/send_quota"
+require "mail_on_rails/send_quota"
 
 # The vacation autoresponder and its loop protections (RFC 3834): answer
 # real correspondence once per sender per window, never answer bounces,
@@ -122,7 +122,7 @@ class VacationResponderTest < ActiveSupport::TestCase
   end
 
   test "a reply consumes a send quota slot and an exhausted quota skips the reply" do
-    quota = MailOnRails::Smtp::SendQuota.new(limit: 1, window: 3600)
+    quota = MailOnRails::SendQuota.new(limit: 1, window: 3600)
     assert respond(inbound, quota: quota)
 
     travel(MailOnRails::VacationResponder::REPLY_WINDOW + 1.minute) do
@@ -132,7 +132,7 @@ class VacationResponderTest < ActiveSupport::TestCase
   end
 
   test "an exhausted quota does not burn the correspondent's claim" do
-    exhausted = MailOnRails::Smtp::SendQuota.new(limit: 1, window: 3600)
+    exhausted = MailOnRails::SendQuota.new(limit: 1, window: 3600)
     assert exhausted.consume(@account.email), "drain the only slot"
     assert_not respond(inbound, quota: exhausted)
     assert_equal 0, MailOnRails::VacationReply.count, "no claim row may be written when nothing was sent"
@@ -142,7 +142,7 @@ class VacationResponderTest < ActiveSupport::TestCase
   end
 
   test "repeat mail inside the window does not touch the quota" do
-    quota = MailOnRails::Smtp::SendQuota.new(limit: 2, window: 3600)
+    quota = MailOnRails::SendQuota.new(limit: 2, window: 3600)
     assert respond(inbound, quota: quota)
     assert_not respond(inbound, quota: quota)
     assert_not respond(inbound, quota: quota)

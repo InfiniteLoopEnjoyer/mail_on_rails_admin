@@ -19,4 +19,20 @@ class HealthControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :internal_server_error
   end
+
+  test "a subset works the same way" do
+    ENV["MAIL_ON_RAILS_SERVERS"] = "smtp"
+
+    get rails_health_check_path
+
+    assert_response :internal_server_error
+  end
+
+  test "up is 200 for a web-only process whose listeners run elsewhere" do
+    ENV["MAIL_ON_RAILS_SERVERS"] = "0"
+
+    get rails_health_check_path
+
+    assert_response :success
+  end
 end

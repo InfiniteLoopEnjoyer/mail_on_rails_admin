@@ -10,136 +10,37 @@ service: mail_on_rails
 # Name of the container image (use your-user/app-name on external registries).
 image: mail_on_rails
 
-# The unified mail service: one Puma process serves everything - web UI,
-# the in-process SMTP and IMAP servers (the :mail_on_rails Puma plugin,
-# lib/puma/plugin/mail_on_rails.rb), and the Solid Queue supervisor
-# (SOLID_QUEUE_IN_PUMA - Action Mailbox routing and outbound delivery
-# need owner-level grants, and this is the only owner-privileged
-# container).
+# Three roles from one image: the web UI (Puma + Solid Queue behind
+# kamal-proxy) and the SMTP and IMAP servers, each in its own container
+# running bin/mail_server. They share the Postgres accessory (Unix
+# socket), the storage volume, the Let's Encrypt mount, and the clamav /
+# rspamd accessories. The mail containers publish their ports straight
+# off the host (options: publish); kamal's boot-new-first order would
+# clash on those ports, so .kamal/hooks/pre-app-boot stops the OLD smtp /
+# imap containers first - a short mail-only outage per deploy (SMTP
+# senders retry, IMAP clients reconnect), while web rolls with zero
+# downtime.
 #
-# HTTPS still rides behind stock kamal-proxy (proxy: below); the mail
-# ports publish straight off this container (options: publish), which is
-# why .kamal/hooks/pre-app-boot stops the old container before the new
-# one boots - kamal's boot-new-first order would clash on those ports.
-# Every deploy therefore has a short full outage (SMTP senders retry,
-# IMAP clients reconnect, and Server#shutdown drains sessions first).
+# One container for everything is still possible: give the web role
+# MAIL_ON_RAILS_SERVERS: smtp,imap plus the publish list and drop the
+# smtp/imap roles (the :mail_on_rails Puma plugin in config/puma.rb does
+# the rest; WEB_CONCURRENCY must then stay 1).
 servers:
   web:
     hosts:
       - 192.168.0.1
-    options:
-      # Host port -> in-container port (the daemons bind >1024 because
-      # the container runs as uid 1000): SMTP 25, submission 587,
-      # submissions/SMTPS 465, IMAP 143, IMAPS 993.
-      publish:
-        - "25:1025"
-        - "587:1587"
-        - "465:1465"
-        - "143:1143"
-        - "993:1993"
     env:
       clear:
-        # Run the Solid Queue supervisor inside Puma (see config/puma.rb).
+        # Run the Solid Queue supervisor inside Puma (see config/puma.rb):
+        # Action Mailbox routing, outbound delivery and the recurring jobs
+        # run here, the only owner-privileged container.
         SOLID_QUEUE_IN_PUMA: true
 
-        # Run the SMTP + IMAP servers inside Puma (the :mail_on_rails
-        # plugin). /up stays down until their listeners are bound.
-        MAIL_ON_RAILS_SERVERS: true
-
-        # EHLO/banner name for the SMTP server and outbound delivery; must
-        # match this host's public mail name (and ideally the droplet's
-        # PTR record).
-        # To relay through a provider instead of delivering to MXes directly,
-        # also set MAIL_ON_RAILS_SMARTHOST (host:port) and
-        # MAIL_ON_RAILS_SMARTHOST_USER/_PASSWORD.
-        SMTP_HELO_HOST: mail.example.com
-
-        # Web-UI/mailer host (proxy.host below and Action Mailer link
-        # generation in config/environments/production.rb).
-        MAIL_ON_RAILS_WEB_HOST: www.example.com
-
-        # TLS for the mail listeners: the certbot accessory (below) renews
-        # into /etc/letsencrypt on the host, mounted read-only into this
-        # container. Both servers re-read the PEMs on mtime change, so a
-        # renewal needs no restart. With these set, unusable material is
-        # fatal at boot on both protocols - explicitly configured TLS
-        # never degrades to plaintext.
-        #
-        # Accept-side abuse caps (per-IP connection cap, connection-rate
-        # tarpit, auth lockout) default on for both protocols; tune or
-        # disable (0) with SMTP_MAX_CONN_PER_IP / SMTP_CONN_RATE /
-        # SMTP_AUTH_LOCKOUT_FAILURES and their MAIL_ON_RAILS_IMAP_*
-        # equivalents. SMTP connections additionally have an absolute
-        # lifetime (SMTP_SESSION_SECONDS, default 3600) - the slowloris
-        # bound; IMAP has none because IDLE is long-lived by design.
-        MAIL_ON_RAILS_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
-        MAIL_ON_RAILS_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
-        SMTP_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
-        SMTP_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
-
-        # Outbound DKIM signing needs no config here: private keys live
-        # encrypted in the domains table (minted by the Domains admin UI on
-        # domain creation); the public halves are published as
-        # <selector>._domainkey.<domain> TXT records (selector default:
-        # rail, override with MAIL_ON_RAILS_DKIM_SELECTOR).
-
-        # Permanent IP/CIDR bans (BannedIp - auth attempts page + Spamhaus
-        # DROP import) need no config: both in-process listeners poll the
-        # table through their stores and drop matches before any banner.
-
-        # Virus scanning: the SMTP server scans at DATA time (rejects
-        # infected mail before acceptance, fails closed with 451 when
-        # clamd is down - so keep the clamav accessory healthy), and the
-        # mailroom + IMAP APPEND rescan app-side (defense in depth). One
-        # address drives every scan path and there is no built-in
-        # default - unset (or "") turns scanning off everywhere, and the
-        # mail servers refuse to boot like that in production unless
-        # SMTP_CLAMAV_OPTIONAL=1 explicitly opts out.
-        SMTP_CLAMAV_ADDR: mail_on_rails-clamav:3310
-
-        # rspamd accessory (see accessories below), reached by container name
-        # over the kamal docker network. Two consumers: the mailroom POSTs
-        # each inbound message here to compute SPF/DKIM/DMARC (+ a spam
-        # action) from the edge-stamped connection facts - rspamd is the
-        # verdict authority for filing; the SMTP server's own
-        # SPF/DKIM/DMARC stack is a connection-time gate - and the SMTP
-        # server scores authenticated submissions at DATA, refusing
-        # rspamd's "reject"/"soft reject" actions (the tripwire for a
-        # compromised account pumping spam; fails open when rspamd is
-        # down). Unset to disable both.
-        SMTP_RSPAMD_ADDR: mail_on_rails-rspamd:11333
-
-        # Per-account outbound quota: recipients accepted from an
-        # authenticated sender per sliding window (seconds), answered with
-        # a retryable 452 once exhausted. Bounds what a stolen password is
-        # worth to a botnet - per-IP limits never see one credential
-        # worked from many IPs. Defaults shown; SMTP_SEND_QUOTA: 0
-        # disables.
-        # SMTP_SEND_QUOTA: 200
-        # SMTP_SEND_QUOTA_WINDOW: 3600
-
-        # Mail-in-transit hardening: the gem defaults to the enforcing
-        # posture (verified outbound TLS, MTA-STS enforce, DMARC
-        # enforcement, rspamd fail-closed) - nothing to flip on. A brand
-        # new deployment that still needs to soak (TLS-RPT reports not yet
-        # clean, "would reject under DMARC enforcement" logs not yet
-        # quiet) weakens the relevant knob explicitly and removes the
-        # override when the soak is done; Settings::Check nags in
-        # production until it is.
-        # SMTP_OUTBOUND_REQUIRE_VERIFIED_TLS: 0
-        # MAIL_ON_RAILS_MTA_STS_MODE: testing
-        # SMTP_DMARC_ENFORCE: 0
-        # MAILROOM_DMARC_ENFORCE: log
-        # SMTP_RSPAMD_FAIL_CLOSED: 0
-        # MAIL_ON_RAILS_SMARTHOST_TLS: starttls
-
-        # Outbound DANE needs no resolver configuration: the gem
-        # validates DNSSEC in-process (chain of trust walked to its
-        # embedded IANA root anchor, denial proofs included), so the mail
-        # DNS client can query any upstream - including Docker's embedded
-        # stub from resolv.conf, untrusted. MAIL_ON_RAILS_DNS_NAMESERVERS
-        # remains available to point at a different upstream if the host
-        # DNS path is ever unreliable.
+        # No mail listeners in the web process: they run in the smtp and
+        # imap roles below (the Puma plugin is then a no-op and /up does
+        # not wait on mail ports). Set to smtp,imap for the all-in-one
+        # container.
+        MAIL_ON_RAILS_SERVERS: 0
 
         # Set number of processes dedicated to Solid Queue (default: 1)
         # JOB_CONCURRENCY: 3
@@ -168,6 +69,53 @@ servers:
         # one - a password-only admin is the whole system's weakest link.
         # Single-operator setups that accept that risk opt out explicitly.
         # MAIL_ON_RAILS_REQUIRE_2FA: 0
+
+  # The SMTP server: MX (25), submission (587), SMTPS (465). Host port ->
+  # in-container port (the daemon binds >1024 because the container runs
+  # as uid 1000). No proxy: kamal-proxy only fronts HTTP.
+  smtp:
+    hosts:
+      - 192.168.0.1
+    cmd: ./bin/mail_server --protocols smtp
+    options:
+      publish:
+        - "25:1025"
+        - "587:1587"
+        - "465:1465"
+      # Docker-level liveness: the MX port answers. Kamal has no HTTP
+      # health check for a non-proxied role; this is what `docker ps`
+      # (and the post-deploy hook) look at.
+      health-cmd: 'bash -c "exec 3<>/dev/tcp/127.0.0.1/1025"'
+      health-interval: 10s
+      health-timeout: 5s
+      health-retries: 3
+      health-start-period: 60s
+    env:
+      clear:
+        # Each connection thread checks a connection out of the AR pool
+        # for the duration of a store call; size the pool for the
+        # listener's concurrency, not for Puma.
+        RAILS_MAX_THREADS: 16
+
+  # The IMAP server: IMAP (143) and IMAPS (993).
+  imap:
+    hosts:
+      - 192.168.0.1
+    cmd: ./bin/mail_server --protocols imap
+    options:
+      publish:
+        - "143:1143"
+        - "993:1993"
+      health-cmd: 'bash -c "exec 3<>/dev/tcp/127.0.0.1/1143"'
+      health-interval: 10s
+      health-timeout: 5s
+      health-retries: 3
+      health-start-period: 60s
+    env:
+      clear:
+        # IMAP IDLE holds many long-lived connections; each store call
+        # checks a pool connection out only for its own duration.
+        RAILS_MAX_THREADS: 16
 
 # Enable SSL auto certification via Let's Encrypt and allow for multiple apps on a single web server.
 # If used with Cloudflare, set encryption mode in SSL/TLS setting to "Full" to enable CF-to-app encryption.
@@ -221,9 +169,114 @@ env:
     POSTGRES_USER: mail_on_rails
     POSTGRES_DB: mail_on_rails_production
 
-    # WEB_CONCURRENCY must stay unset/1: the mail listeners live in
-    # exactly one process, and the :mail_on_rails plugin refuses cluster
-    # mode outright.
+    # Web-UI/mailer host (proxy.host below and Action Mailer link
+    # generation in config/environments/production.rb). Every role boots
+    # the app, so every role needs it.
+    MAIL_ON_RAILS_WEB_HOST: www.example.com
+
+    # Mail configuration shared by every role: the web role runs outbound
+    # delivery and the mailroom (HELO name, scanners), the smtp role the
+    # listeners, the imap role APPEND rescans - so these live here rather
+    # than per role. Role-specific values (ports, pool size, the job
+    # supervisor) sit on the roles above.
+
+
+    # EHLO/banner name for the SMTP server and outbound delivery; must
+    # match this host's public mail name (and ideally the droplet's
+    # PTR record).
+    # To relay through a provider instead of delivering to MXes directly,
+    # also set MAIL_ON_RAILS_SMARTHOST (host:port) and
+    # MAIL_ON_RAILS_SMARTHOST_USER/_PASSWORD.
+    SMTP_HELO_HOST: mail.example.com
+
+    # TLS for the mail listeners: the certbot accessory (below) renews
+    # into /etc/letsencrypt on the host, mounted read-only into this
+    # container. Both servers re-read the PEMs on mtime change, so a
+    # renewal needs no restart. With these set, unusable material is
+    # fatal at boot on both protocols - explicitly configured TLS
+    # never degrades to plaintext.
+    #
+    # Accept-side abuse caps (per-IP connection cap, connection-rate
+    # tarpit, auth lockout) default on for both protocols; tune or
+    # disable (0) with SMTP_MAX_CONN_PER_IP / SMTP_CONN_RATE /
+    # SMTP_AUTH_LOCKOUT_FAILURES and their MAIL_ON_RAILS_IMAP_*
+    # equivalents. SMTP connections additionally have an absolute
+    # lifetime (SMTP_SESSION_SECONDS, default 3600) - the slowloris
+    # bound; IMAP has none because IDLE is long-lived by design.
+    SMTP_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
+    SMTP_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
+    MAIL_ON_RAILS_TLS_CERT: /etc/letsencrypt/live/mail.example.com/fullchain.pem
+    MAIL_ON_RAILS_TLS_KEY: /etc/letsencrypt/live/mail.example.com/privkey.pem
+
+    # Outbound DKIM signing needs no config here: private keys live
+    # encrypted in the domains table (minted by the Domains admin UI on
+    # domain creation); the public halves are published as
+    # <selector>._domainkey.<domain> TXT records (selector default:
+    # rail, override with MAIL_ON_RAILS_DKIM_SELECTOR).
+
+    # Permanent IP/CIDR bans (BannedIp - auth attempts page + Spamhaus
+    # DROP import) need no config: every listener polls the table
+    # through its store, drops matches before any banner, and kicks
+    # already-open sessions on its next ops-sync tick.
+
+    # Virus scanning: the SMTP server (smtp role) scans at DATA time
+    # (rejects infected mail before acceptance, fails closed with 451
+    # when clamd is down - so keep the clamav accessory healthy), and
+    # the mailroom (web) + IMAP APPEND (imap) rescan (defense in depth). One
+    # address drives every scan path and there is no built-in
+    # default - unset (or "") turns scanning off everywhere, and the
+    # mail servers refuse to boot like that in production unless
+    # SMTP_CLAMAV_OPTIONAL=1 explicitly opts out.
+    SMTP_CLAMAV_ADDR: mail_on_rails-clamav:3310
+
+    # rspamd accessory (see accessories below), reached by container name
+    # over the kamal docker network. Two consumers: the mailroom POSTs
+    # each inbound message here to compute SPF/DKIM/DMARC (+ a spam
+    # action) from the edge-stamped connection facts - rspamd is the
+    # verdict authority for filing; the SMTP server's own
+    # SPF/DKIM/DMARC stack is a connection-time gate - and the SMTP
+    # server scores authenticated submissions at DATA, refusing
+    # rspamd's "reject"/"soft reject" actions (the tripwire for a
+    # compromised account pumping spam; fails open when rspamd is
+    # down). Unset to disable both.
+    SMTP_RSPAMD_ADDR: mail_on_rails-rspamd:11333
+
+    # Per-account outbound quota: recipients accepted from an
+    # authenticated sender per sliding window (seconds), answered with
+    # a retryable 452 once exhausted. Bounds what a stolen password is
+    # worth to a botnet - per-IP limits never see one credential
+    # worked from many IPs. Defaults shown; SMTP_SEND_QUOTA: 0
+    # disables.
+    # SMTP_SEND_QUOTA: 200
+    # SMTP_SEND_QUOTA_WINDOW: 3600
+
+    # Mail-in-transit hardening: the gem defaults to the enforcing
+    # posture (verified outbound TLS, MTA-STS enforce, DMARC
+    # enforcement, rspamd fail-closed) - nothing to flip on. A brand
+    # new deployment that still needs to soak (TLS-RPT reports not yet
+    # clean, "would reject under DMARC enforcement" logs not yet
+    # quiet) weakens the relevant knob explicitly and removes the
+    # override when the soak is done; Settings::Check nags in
+    # production until it is.
+    # SMTP_OUTBOUND_REQUIRE_VERIFIED_TLS: 0
+    # MAIL_ON_RAILS_MTA_STS_MODE: testing
+    # SMTP_DMARC_ENFORCE: 0
+    # MAILROOM_DMARC_ENFORCE: log
+    # SMTP_RSPAMD_FAIL_CLOSED: 0
+    # MAIL_ON_RAILS_SMARTHOST_TLS: starttls
+
+    # Outbound DANE needs no resolver configuration: the gem
+    # validates DNSSEC in-process (chain of trust walked to its
+    # embedded IANA root anchor, denial proofs included), so the mail
+    # DNS client can query any upstream - including Docker's embedded
+    # stub from resolv.conf, untrusted. MAIL_ON_RAILS_DNS_NAMESERVERS
+    # remains available to point at a different upstream if the host
+    # DNS path is ever unreliable.
+
+    # WEB_CONCURRENCY: the web role may run cluster mode now that the
+    # mail listeners live in their own containers; only an all-in-one web
+    # role (MAIL_ON_RAILS_SERVERS: smtp,imap) must keep it unset/1 - the
+    # :mail_on_rails plugin refuses cluster mode with listeners in-process.
 
     # Log everything from Rails
     # RAILS_LOG_LEVEL: debug
@@ -234,6 +287,8 @@ aliases:
   console: app exec --interactive --reuse "bin/rails console"
   shell: app exec --interactive --reuse "bash"
   logs: app logs -f
+  smtp-logs: app logs -f --roles smtp
+  imap-logs: app logs -f --roles imap
   dbc: app exec --interactive --reuse "bin/rails dbconsole --include-password"
   # On-demand pg_dump onto the storage volume (the nightly one is
   # DatabaseBackupJob in config/recurring.yml). Restore: docs/backups.md.

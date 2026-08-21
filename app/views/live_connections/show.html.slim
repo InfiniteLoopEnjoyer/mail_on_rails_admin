@@ -16,20 +16,22 @@ header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
 
 p.mb-4.text-sm.text-slate-500.dark:text-slate-400
   - if controller_name == "smtp"
-    ' Live connections on the SMTP listeners running inside this process,
-    ' updated as connections come and go. Banning an address drops its live
-    ' connections and silences future ones before the banner.
+    ' Live connections on the SMTP listeners - wherever they run, this
+    ' process or the smtp container - as each listener reports them every
+    ' few seconds. Banning an address drops its live connections and
+    ' silences future ones before the banner.
   - else
-    ' Live connections on the IMAP listeners running inside this process,
-    ' updated as connections come and go - idling mail clients hold
-    ' connections open for a long time, so long-lived rows here are
-    ' healthy. Banning an address drops its live connections and silences
-    ' future ones before the greeting.
+    ' Live connections on the IMAP listeners - wherever they run, this
+    ' process or the imap container - as each listener reports them every
+    ' few seconds. Idling mail clients hold connections open for a long
+    ' time, so long-lived rows here are healthy. Banning an address drops
+    ' its live connections and silences future ones before the greeting.
 
 / The servers signal connection activity over this stream (debounced
-/ refresh broadcasts, LiveConnectionsBroadcaster); each signal makes the
-/ page re-fetch itself and morph. The slow poll only keeps relative times
-/ fresh between events and covers a dropped cable connection.
+/ refresh broadcasts, LiveConnectionsBroadcaster, fired after the
+/ listener wrote its picture to the tables); each signal makes the page
+/ re-fetch itself and morph. The slow poll only keeps relative times fresh
+/ between events and covers a dropped cable connection.
 = turbo_stream_from controller_name, :connections
 div data-controller="poll" data-poll-interval-value="30000"
   = render "connections"

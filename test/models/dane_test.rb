@@ -1,11 +1,11 @@
 require "test_helper"
-require "mail_on_rails/smtp/sender_auth/dns"
+require "mail_on_rails/sender_auth/dns"
 
 # DANE TLSA matching (RFC 7672/6698) against locally minted certificate
 # chains: DANE-EE pins the leaf and ignores names/expiry, DANE-TA pins an
 # anchor the leaf must chain to and name-match under.
 class DaneTest < ActiveSupport::TestCase
-  Tlsa = MailOnRails::Smtp::SenderAuth::Dns::Tlsa
+  Tlsa = MailOnRails::SenderAuth::Dns::Tlsa
 
   def make_key = OpenSSL::PKey::RSA.new(2048)
 

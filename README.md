@@ -7,11 +7,15 @@
 
 The companion app for the
 **[mail_on_rails](https://github.com/InfiniteLoopEnjoyer/mail_on_rails)**
-gem — a from-scratch mail server for Rails (in-process SMTP + IMAP,
-mail stored in the app's database). This repo is a complete, deployable
-example of a host application: a webmail client, a mail-server admin
-UI, and a single-container Kamal deploy. Use it as a mail server out of
-the box, or as a worked example of what building on the gem looks like.
+gems — a from-scratch mail server for Rails (SMTP + IMAP, mail stored in
+the app's database): the core gem (models, migrations, runtime) plus
+[mail_on_rails_smtp](https://github.com/InfiniteLoopEnjoyer/mail_on_rails_smtp)
+and [mail_on_rails_imap](https://github.com/InfiniteLoopEnjoyer/mail_on_rails_imap).
+This repo is a complete, deployable example of a host application: a
+webmail client, a mail-server admin UI, and a Kamal deploy that runs
+web, SMTP and IMAP as three containers from one image (or all in one
+container, your choice). Use it as a mail server out of the box, or as a
+worked example of what building on the gems looks like.
 
 ## How the two repos fit together
 
@@ -67,10 +71,16 @@ control, the Prometheus endpoint, and the production deploy config.
 
 ## Architecture
 
-One container runs everything: Puma serves the web UI and Solid Queue,
-and the gem's `:mail_on_rails` Puma plugin boots the SMTP server (MX +
-authenticated submission) and the IMAP server on background threads in
-the same process ([config/puma.rb](config/puma.rb)). The listeners
+In production three containers share one image and one database: the
+web role (Puma + Solid Queue behind kamal-proxy), the smtp role
+(`bin/mail_server --protocols smtp`: MX + authenticated submission) and
+the imap role (`bin/mail_server --protocols imap`). In development -
+and in a one-container deploy - the gem's `:mail_on_rails` Puma plugin
+boots the same listeners on background threads inside the web process
+([config/puma.rb](config/puma.rb); `MAIL_ON_RAILS_SERVERS` picks
+`smtp,imap`, one of them, or `0`). The admin UI reads the listeners'
+state from the database either way (see [docs/split.md](docs/split.md)).
+The listeners
 carry the gem's accept-side protections: process-wide and per-IP
 connection caps, a per-IP connection-rate tarpit, a per-IP lockout
 after repeated failed authentications, the admin IP denylist, and
@@ -119,8 +129,9 @@ scanning policy live in [docs/virus_scanning.md](docs/virus_scanning.md).
 
 ## Deployment
 
-The deploy is a single Kamal-managed container (web + SMTP + IMAP in
-one process) plus PostgreSQL, rspamd, and ClamAV accessories.
+The deploy is three Kamal roles from one image - web, smtp, imap - plus
+PostgreSQL, rspamd, ClamAV and certbot accessories (one all-in-one role
+is still supported; see [docs/split.md](docs/split.md)).
 [config/deploy.yml](config/deploy.yml) is a sanitized template — real
 deploys use a destination file (`bin/kamal deploy -d prod`). The
 extraction/deploy runbook is

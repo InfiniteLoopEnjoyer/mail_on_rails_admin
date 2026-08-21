@@ -77,11 +77,28 @@ class HoneypotControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_reauthentication_path
   end
 
+  # The kick is a command row per protocol: each listener (this process or
+  # the smtp/imap containers) drops the source's live connections on its
+  # next sync tick and acknowledges with the count. Nothing else persists -
+  # in particular no ban.
   test "an admin can kick a source's live connections" do
     record(ip: "203.0.113.7")
     post kick_honeypot_events_path, params: { ip: "203.0.113.7" }
     assert_redirected_to honeypot_events_path
+    assert_match(/drop live connections from 203\.0\.113\.7/, flash[:notice])
+    kicks = MailOnRails::ConnectionKick.where(ip: "203.0.113.7").order(:protocol)
+    assert_equal %w[imap smtp], kicks.map(&:protocol)
+    assert kicks.all? { |kick| kick.processed_at.nil? && kick.expires_at > Time.current }
+    assert_equal users(:one).email_address, kicks.first.requested_by
+    assert_equal 0, MailOnRails::BannedIp.count
     assert_equal "honeypot.kick", AuditEvent.last.action
+  end
+
+  test "a kick for something that is not an address is refused" do
+    post kick_honeypot_events_path, params: { ip: "not-an-ip" }
+    assert_redirected_to honeypot_events_path
+    assert_match(/not an IP address/, flash[:alert])
+    assert_equal 0, MailOnRails::ConnectionKick.count
   end
 
   test "the ban button remains for manual escalation" do

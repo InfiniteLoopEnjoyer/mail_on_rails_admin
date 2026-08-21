@@ -36,30 +36,26 @@ class HoneypotController < ApplicationController
   end
 
   # Immediate, connection-scoped containment: drop the source's live
-  # connections without persisting anything. Zero collateral beyond the
+  # connections without persisting a ban. Zero collateral beyond the
   # moment - the safest escalation, complementing the permanent-ban button
-  # (which is the deliberate, higher-collateral step).
+  # (which is the deliberate, higher-collateral step). The mail listeners
+  # may live in other containers, so this is a command row per protocol
+  # (MailOnRails::ConnectionKick) that each listener picks up on its next
+  # ops-sync tick and acknowledges with the count; the flash is
+  # fire-and-forget on purpose - waiting on the acknowledgement inside a
+  # web request would be RPC over the database.
   def kick
     ip = params[:ip].to_s
-    count = kick_connections_from(ip)
-    audit "honeypot.kick", nil, ip: ip, kicked: count
-    notice = count.positive? ? "Dropped #{count} live #{"connection".pluralize(count)} from #{ip}." : "No live connections from #{ip}."
-    redirect_to honeypot_events_path, notice: notice
+    target = IPAddr.new(ip).to_s
+    kicks = MailOnRails::ConnectionKick.request!(target, requested_by: Current.user&.email_address)
+    audit "honeypot.kick", nil, ip: target, kick_ids: kicks.map(&:id)
+    redirect_to honeypot_events_path,
+                notice: "Asked the mail servers to drop live connections from #{target}; they act within a few seconds."
+  rescue IPAddr::Error
+    redirect_to honeypot_events_path, alert: "#{ip.inspect} is not an IP address."
   end
 
   private
-
-  def kick_connections_from(ip)
-    require "mail_on_rails"
-    target = IPAddr.new(ip)
-    MailOnRails.kick_connections do |conn_ip|
-      IPAddr.new(conn_ip) == target
-    rescue IPAddr::Error
-      false
-    end
-  rescue IPAddr::Error
-    0
-  end
 
   def set_window
     @window = WINDOWS.key?(params[:window]) ? params[:window] : DEFAULT_WINDOW

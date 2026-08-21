@@ -4,33 +4,31 @@ require "mail_on_rails"
 class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
   include ActiveJob::TestHelper
 
+  LISTENER = "11111111-1111-4111-8111-111111111111"
+
   setup do
     sign_in_as users(:one)
   end
 
-  # What MailOnRails::Runtime.server returns when the in-process servers run;
-  # the test process never boots them, so the pages get this stand-in.
-  class FakeServer
-    def initialize(connections, lockouts: {})
-      @connections = connections
-      @lockouts = lockouts
-    end
-
-    attr_reader :connections, :lockouts
-
-    def max_connections = 100
+  # What a running server projects into the ops tables every sync tick
+  # (MailOnRails::Netserv::OpsSync): its listener row, its live
+  # connections, its accept-side lockouts. The test process never boots a
+  # listener, so the pages read rows seeded here - exactly as they read
+  # rows written by the smtp/imap containers in production.
+  def listener!(protocol, ports: [ 1025, 1587, 1465 ], max_connections: 100, heartbeat_at: Time.current, ready: true)
+    MailOnRails::Listener.create!(listener_id: LISTENER, protocol: protocol.to_s, pid: 4242, hostname: "mx1",
+                                  ports: ports, max_connections: max_connections, ready: ready,
+                                  started_at: 1.hour.ago, heartbeat_at: heartbeat_at)
   end
 
-  # Swaps Boot.server for the block's duration (the repo's hand-rolled
-  # stubbing convention - minitest/mock is a separate gem under
-  # Minitest 6).
-  def with_server(server)
-    singleton = MailOnRails::Runtime.singleton_class
-    original = MailOnRails::Runtime.method(:server)
-    singleton.define_method(:server) { |_protocol| server }
-    yield
-  ensure
-    singleton.define_method(:server, original)
+  def connections!(protocol, rows)
+    listener!(protocol) unless MailOnRails::Listener.exists?(listener_id: LISTENER)
+    MailOnRails::OpenConnection.replace_for!(LISTENER, protocol, rows)
+  end
+
+  def lockouts!(protocol, lockouts)
+    listener!(protocol) unless MailOnRails::Listener.exists?(listener_id: LISTENER)
+    MailOnRails::AcceptLockout.replace_for!(LISTENER, protocol, lockouts)
   end
 
   test "requires a signed-in user" do
@@ -39,11 +37,11 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
   end
 
-  test "smtp page explains when the server is not running in this process" do
+  test "smtp page explains when no listener has reported in" do
     get smtp_path
     assert_response :success
     assert_select "h1", "SMTP"
-    assert_match "not running in this process", response.body
+    assert_match "No SMTP server is running", response.body
   end
 
   test "the page subscribes to refresh broadcasts and keeps a backstop poll" do
@@ -67,37 +65,59 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
     assert_match "max-w-[88rem]", response.body
   end
 
-  test "imap page explains when the server is not running in this process" do
+  test "imap page explains when no listener has reported in" do
     get imap_path
     assert_response :success
     assert_select "h1", "IMAP"
-    assert_match "not running in this process", response.body
+    assert_match "No IMAP server is running", response.body
+  end
+
+  test "a live listener shows its status chip, ports and the connection cap" do
+    listener!(:smtp, ports: [ 1025, 1587, 1465 ], max_connections: 250)
+    get smtp_path
+
+    assert_response :success
+    assert_match "SMTP up", response.body
+    assert_match "ports 1025/1587/1465", response.body
+    assert_match "mx1", response.body
+    assert_match "0 / 250", response.body
+  end
+
+  test "a listener whose heartbeat went stale counts as gone" do
+    listener!(:smtp, heartbeat_at: 5.minutes.ago)
+    connections!(:smtp, [ { connection_id: 1, peer_ip: "203.0.113.9", port: 1025, connected_at: 1.minute.ago } ])
+    get smtp_path
+
+    assert_response :success
+    assert_match "No SMTP server is running", response.body
+    assert_no_match "203.0.113.9", response.body
   end
 
   test "smtp page lists live connections with ban buttons" do
-    server = FakeServer.new([
-      { protocol: "SMTP", peer_ip: "203.0.113.9", port: 1587, role: :submission,
+    connections!(:smtp, [
+      { connection_id: 1, protocol: "SMTP", peer_ip: "203.0.113.9", port: 1587, role: :submission,
         connected_at: 2.minutes.ago, user: "carol@example.com", helo: "laptop.lan",
         messages: 3, tls: true }
     ])
-    with_server(server) { get smtp_path }
+    get smtp_path
 
     assert_response :success
     assert_match "203.0.113.9", response.body
     assert_match "laptop.lan", response.body
     assert_match "carol@example.com", response.body
+    assert_match "1 / 100", response.body
     assert_select "form[action=?]", banned_ips_path
     # the ban must come back to this page, not the auth attempts index
     assert_select "input[name=origin][value=smtp]"
   end
 
   test "imap page lists live connections and their protocol state" do
-    server = FakeServer.new([
-      { protocol: "IMAP", peer_ip: "203.0.113.9", port: 1993, role: nil,
+    connections!(:imap, [
+      { connection_id: 1, protocol: "IMAP", peer_ip: "203.0.113.9", port: 1993, role: nil,
         connected_at: 2.minutes.ago, user: "carol@example.com",
         state: "IDLE INBOX", tls: true }
     ])
-    with_server(server) { get imap_path }
+    get imap_path
 
     assert_response :success
     assert_match "IDLE INBOX", response.body
@@ -105,32 +125,32 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "a tarpitted connection wears its delay as a badge" do
-    server = FakeServer.new([
-      { protocol: "SMTP", peer_ip: "203.0.113.9", port: 1025, role: :mx,
+    connections!(:smtp, [
+      { connection_id: 1, protocol: "SMTP", peer_ip: "203.0.113.9", port: 1025, role: :mx,
         connected_at: 5.seconds.ago, user: nil, helo: nil, messages: 0,
         tls: false, tarpit: 8.0 }
     ])
-    with_server(server) { get smtp_path }
+    get smtp_path
 
     assert_response :success
     assert_match "tarpit 8s", response.body
   end
 
   test "untarpitted connections show no badge" do
-    server = FakeServer.new([
-      { protocol: "SMTP", peer_ip: "203.0.113.9", port: 1025, role: :mx,
+    connections!(:smtp, [
+      { connection_id: 1, protocol: "SMTP", peer_ip: "203.0.113.9", port: 1025, role: :mx,
         connected_at: 5.seconds.ago, user: nil, helo: nil, messages: 0,
         tls: false, tarpit: nil }
     ])
-    with_server(server) { get smtp_path }
+    get smtp_path
 
     assert_response :success
     assert_no_match "tarpit", response.body
   end
 
   test "locked-out addresses render with their remaining time and a ban button" do
-    server = FakeServer.new([], lockouts: { "203.0.113.77" => 240.0 })
-    with_server(server) { get imap_path }
+    lockouts!(:imap, { "203.0.113.77" => 240.seconds.from_now })
+    get imap_path
 
     assert_response :success
     assert_select "h2", text: "Locked-out addresses"
@@ -140,16 +160,15 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "omits the locked-out section when nothing is locked" do
-    server = FakeServer.new([])
-    with_server(server) { get imap_path }
+    listener!(:imap)
+    get imap_path
 
     assert_response :success
     assert_select "h2", text: "Locked-out addresses", count: 0
   end
 
-  # History is DB-backed, so all of these run without a live server
-  # (Boot.server is nil in the test process) - which also pins that the
-  # history section renders on a web-only boot.
+  # History is DB-backed, so all of these run without a listener row -
+  # which also pins that the history section renders on a web-only boot.
   test "history lists the protocol's closed connections in the window" do
     MailOnRails::ClosedConnection.create!(protocol: "smtp", ip: "198.51.100.7", port: 1025, role: "mx",
                              username: "carol@example.com", helo: "laptop.lan", messages: 1,
@@ -227,11 +246,11 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
 
   test "a connection covered by an existing ban shows the badge instead of a button" do
     MailOnRails::BannedIp.create!(cidr: "203.0.113.0/24", note: "test")
-    server = FakeServer.new([
-      { protocol: "IMAP", peer_ip: "203.0.113.9", port: 1143, role: nil,
+    connections!(:imap, [
+      { connection_id: 1, protocol: "IMAP", peer_ip: "203.0.113.9", port: 1143, role: nil,
         connected_at: 1.minute.ago, user: nil, state: "pre-auth", tls: false }
     ])
-    with_server(server) { get imap_path }
+    get imap_path
 
     assert_response :success
     assert_match "banned", response.body

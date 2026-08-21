@@ -1,9 +1,9 @@
 require "test_helper"
-require "mail_on_rails/smtp/sender_auth/dns"
+require "mail_on_rails/sender_auth/dns"
 
 class OutboundDelivererTest < ActiveSupport::TestCase
-  Answer = MailOnRails::Smtp::SenderAuth::Dns::Answer
-  Tlsa = MailOnRails::Smtp::SenderAuth::Dns::Tlsa
+  Answer = MailOnRails::SenderAuth::Dns::Answer
+  Tlsa = MailOnRails::SenderAuth::Dns::Tlsa
 
   # Hash-backed stand-in for the SenderAuth Dns client; records TLSA
   # lookups so tests can assert DANE stayed quiet on insecure paths.

@@ -34,21 +34,21 @@ port ENV.fetch("PORT", 3000)
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart
 
-# Everything runs inside this one Puma process, in development and in the
-# Kamal deploy alike: the Solid Queue supervisor (so
-# DeliverSmtpOutboundJob's recurring schedule works with a plain
-# `bin/rails server`; SOLID_QUEUE_IN_PUMA in config/deploy.yml) and the
-# mail_on_rails SMTP + IMAP servers (the :mail_on_rails plugin;
-# MAIL_ON_RAILS_SERVERS=true on the web role). One process serving every
-# protocol is the point of the unified deploy - which is also why the
-# plugin refuses WEB_CONCURRENCY > 1.
+# The Solid Queue supervisor runs inside Puma (so DeliverSmtpOutboundJob's
+# recurring schedule works with a plain `bin/rails server`;
+# SOLID_QUEUE_IN_PUMA on the web role in config/deploy.yml).
 rails_env = ENV.fetch("RAILS_ENV") { ENV.fetch("RACK_ENV", "development") }
 
 plugin :solid_queue if rails_env == "development" || ENV["SOLID_QUEUE_IN_PUMA"] == "true"
 
-if rails_env == "development" || ENV["MAIL_ON_RAILS_SERVERS"] == "true"
-  plugin :mail_on_rails
-end
+# The mail_on_rails SMTP/IMAP servers can run inside this Puma process
+# too. The plugin is always loaded; WHICH protocols it serves here is
+# MAIL_ON_RAILS_SERVERS ("smtp,imap", "smtp", "imap", or 0 for web only),
+# else every installed protocol in development and none elsewhere - so the
+# same file serves the all-in-one container and the web role whose
+# listeners run in the smtp/imap containers (bin/mail_server). With
+# listeners in-process the plugin refuses WEB_CONCURRENCY > 1.
+plugin :mail_on_rails
 
 # In development, keep a local clamd docker container running so the
 # mailroom / IMAP APPEND virus scan works without any setup (in the deploy

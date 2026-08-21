@@ -1,0 +1,34 @@
+#!/bin/bash
+set -e
+
+# Kamal health-checks only proxied roles; the smtp and imap roles publish
+# raw TCP ports with no proxy in front, so a deploy that left them unbound
+# would otherwise look green. Probe every published mail port on every
+# host right after the deploy; a port that never answers fails the deploy
+# loudly (the containers keep running for inspection: `bin/kamal
+# smtp-logs` / `imap-logs`).
+
+[ "$KAMAL_SERVICE" = "mail_on_rails" ] || exit 0
+
+MAIL_PORTS="${MAIL_PORTS:-25 587 465 143 993}"
+ATTEMPTS="${MAIL_PORT_ATTEMPTS:-30}"
+
+IFS=',' read -ra HOSTS <<< "$KAMAL_HOSTS"
+for host in "${HOSTS[@]}"; do
+  for port in $MAIL_PORTS; do
+    ok=""
+    for _ in $(seq 1 "$ATTEMPTS"); do
+      if ssh "root@$host" "timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$port' 2>/dev/null"; then
+        ok=1
+        break
+      fi
+      sleep 2
+    done
+    if [ -n "$ok" ]; then
+      echo "mail port $port answers on $host"
+    else
+      echo "mail port $port never answered on $host after $ATTEMPTS attempts" >&2
+      exit 1
+    fi
+  done
+done

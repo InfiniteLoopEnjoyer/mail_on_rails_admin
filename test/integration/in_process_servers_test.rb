@@ -52,7 +52,22 @@ class InProcessServersTest < ActiveSupport::TestCase
     MailOnRails::AuthAttempt.delete_all
     MailOnRails::AuthThrottle.delete_all
     MailOnRails::ClosedConnection.delete_all
+    MailOnRails::BannedIp.delete_all
+    MailOnRails::ConnectionKick.delete_all
+    MailOnRails::OpenConnection.delete_all
+    MailOnRails::AcceptLockout.delete_all
+    MailOnRails::Listener.delete_all
     MailOnRails::EmailAccount.where(email: EMAIL).destroy_all
+  end
+
+  def eventually(timeout, message)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    loop do
+      return if yield
+      flunk message if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.1
+    end
   end
 
   test "the full stack serves SMTP inbound, submission, and IMAP in one process" do
@@ -131,6 +146,57 @@ class InProcessServersTest < ActiveSupport::TestCase
       error = assert_raises(Net::SMTPFatalError) { session.rcptto("nobody@foreign.test") }
       assert_match(/5\.7\.1 Relaying denied/, error.message)
     end
+  end
+
+  # The ops-state projection that makes the admin UI work from any process:
+  # each server heartbeats a Listener row and mirrors its live connections;
+  # a BannedIp row drops matching live sessions on the next sync tick; a
+  # ConnectionKick command does the same without a ban and is acknowledged.
+  test "listeners project their live picture and act on bans and kicks through the database" do
+    eventually(10, "both listeners heartbeat") do
+      MailOnRails::Listener.alive(:smtp).any? && MailOnRails::Listener.alive(:imap).any?
+    end
+    imap_listener = MailOnRails::Listener.alive(:imap).sole
+    assert_includes imap_listener.ports, @imap_port
+    assert imap_listener.ready?
+
+    imap = Net::IMAP.new("127.0.0.1", port: @imaps_port, ssl: { verify_mode: OpenSSL::SSL::VERIFY_NONE })
+    imap.login(EMAIL, PASSWORD)
+    eventually(10, "the IMAP session appears in open_connections") do
+      MailOnRails::OpenConnection.live(:imap).exists?(peer_ip: "127.0.0.1", username: EMAIL)
+    end
+    row = MailOnRails::OpenConnection.live(:imap).find_by(username: EMAIL)
+    assert row.tls
+    assert_equal @imaps_port, row.port
+
+    # A kick command is processed and acknowledged, and the session is gone.
+    kick = MailOnRails::ConnectionKick.request!("127.0.0.1", protocols: [ "imap" ]).sole
+    eventually(10, "the kick is acknowledged") { kick.reload.processed_at.present? }
+    assert_equal 1, kick.kicked_count
+    assert_raises(IOError, EOFError, Errno::ECONNRESET, Net::IMAP::Error) do
+      3.times { imap.noop }
+    end
+    eventually(10, "the kicked session leaves open_connections") do
+      MailOnRails::OpenConnection.live(:imap).where(username: EMAIL).none?
+    end
+
+    # A ban drops an already-open session too (no kick row needed).
+    imap2 = Net::IMAP.new("127.0.0.1", port: @imaps_port, ssl: { verify_mode: OpenSSL::SSL::VERIFY_NONE })
+    imap2.login(EMAIL, PASSWORD)
+    eventually(10, "the second session appears") do
+      MailOnRails::OpenConnection.live(:imap).exists?(username: EMAIL)
+    end
+    MailOnRails::BannedIp.create!(cidr: "127.0.0.1/32", note: "e2e")
+    eventually(10, "the banned session is dropped") do
+      MailOnRails::OpenConnection.live(:imap).where(username: EMAIL).none?
+    end
+    assert_raises(IOError, EOFError, Errno::ECONNRESET, Net::IMAP::Error) do
+      3.times { imap2.noop }
+    end
+    assert_equal 0, MailOnRails::ConnectionKick.where(ip: "127.0.0.1").pending.count
+  ensure
+    imap&.disconnect rescue nil
+    imap2&.disconnect rescue nil
   end
 
   test "stop_servers drains and unbinds every listener" do
