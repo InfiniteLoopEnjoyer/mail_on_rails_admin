@@ -13,22 +13,34 @@ set -e
 MAIL_PORTS="${MAIL_PORTS:-25 587 465 143 993}"
 ATTEMPTS="${MAIL_PORT_ATTEMPTS:-30}"
 
+# One connect per (address, port). 127.0.0.1 exercises the IPv4 publish;
+# the host's global IPv6 address (when it has one) exercises the ip6tables
+# DNAT path - bash's /dev/tcp takes a bare v6 literal - so a v6 publish
+# that silently broke fails the deploy too.
+probe() {
+  local host=$1 addr=$2 port=$3
+  for _ in $(seq 1 "$ATTEMPTS"); do
+    if ssh "root@$host" "timeout 3 bash -c 'exec 3<>/dev/tcp/$addr/$port' 2>/dev/null"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 IFS=',' read -ra HOSTS <<< "$KAMAL_HOSTS"
 for host in "${HOSTS[@]}"; do
-  for port in $MAIL_PORTS; do
-    ok=""
-    for _ in $(seq 1 "$ATTEMPTS"); do
-      if ssh "root@$host" "timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$port' 2>/dev/null"; then
-        ok=1
-        break
+  addrs="127.0.0.1"
+  v6=$(ssh "root@$host" "ip -6 -o addr show scope global 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 | head -1")
+  [ -n "$v6" ] && addrs="$addrs $v6"
+  for addr in $addrs; do
+    for port in $MAIL_PORTS; do
+      if probe "$host" "$addr" "$port"; then
+        echo "mail port $port answers on $host ($addr)"
+      else
+        echo "mail port $port never answered on $host ($addr) after $ATTEMPTS attempts" >&2
+        exit 1
       fi
-      sleep 2
     done
-    if [ -n "$ok" ]; then
-      echo "mail port $port answers on $host"
-    else
-      echo "mail port $port never answered on $host after $ATTEMPTS attempts" >&2
-      exit 1
-    fi
   done
 done

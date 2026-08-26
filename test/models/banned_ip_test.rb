@@ -45,6 +45,14 @@ class BannedIpTest < ActiveSupport::TestCase
     assert_nil MailOnRails::BannedIp.covering(nil)
   end
 
+  # A dual-stack "::" listener reports IPv4 peers as v4-mapped IPv6.
+  test "an IPv4 ban covers a v4-mapped address" do
+    range_ban = MailOnRails::BannedIp.create!(cidr: "203.0.113.0/24")
+
+    assert_equal range_ban, MailOnRails::BannedIp.covering("::ffff:203.0.113.200")
+    assert_nil MailOnRails::BannedIp.covering("::ffff:203.0.114.1")
+  end
+
   test "an IPv4 ban never matches an IPv6 address" do
     MailOnRails::BannedIp.create!(cidr: "0.0.0.0/8", source: "spamhaus_drop")
     assert_nil MailOnRails::BannedIp.covering("::1")

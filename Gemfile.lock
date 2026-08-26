@@ -1,6 +1,6 @@
 GIT
   remote: https://github.com/InfiniteLoopEnjoyer/mail_on_rails.git
-  revision: 2b1c2f96bf69e1383cfc36c633f56a91c4a5b287
+  revision: 436b93802c3d6cfb59093de60470b3d0a6e3afd2
   branch: main
   specs:
     mail_on_rails (0.1.0)
@@ -24,7 +24,7 @@ GIT
 
 GIT
   remote: https://github.com/InfiniteLoopEnjoyer/mail_on_rails_imap.git
-  revision: b21a1067a6d9ddcb25efbb98c45a715b214fd2e4
+  revision: e3f2662ec98aa2a016c3bdad249fa68e3bc14988
   branch: main
   specs:
     mail_on_rails_imap (0.1.0)
@@ -32,7 +32,7 @@ GIT
 
 GIT
   remote: https://github.com/InfiniteLoopEnjoyer/mail_on_rails_smtp.git
-  revision: 6c3dd79306e90bda2e1b818a9fcd5355e7fcc024
+  revision: ab0a47294e83ef75302904758c26581f34d3b503
   branch: main
   specs:
     mail_on_rails_smtp (0.1.0)

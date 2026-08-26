@@ -92,12 +92,53 @@ systemctl enable --now fail2ban
 systemctl restart fail2ban
 
 # --- Firewall ---------------------------------------------------------------
-# NOTE: Docker publishes container ports via its own iptables chains, which
-# BYPASS ufw - the mail/web ports (25, 80, 443, 143, 993, ...) are exposed by
-# the kamal-managed containers regardless of these rules. ufw still protects
-# any daemons listening directly on the host.
+# NOTE: Docker publishes container ports via its own iptables/ip6tables
+# chains, which BYPASS ufw (v4 and v6 alike) - the mail/web ports (25, 80,
+# 443, 143, 993, ...) are exposed by the kamal-managed containers regardless
+# of these rules. ufw still protects any daemons listening directly on the
+# host (including docker-proxy's own sockets).
 ufw allow OpenSSH
 ufw --force enable
+
+# --- IPv6 -------------------------------------------------------------------
+# DigitalOcean hands existing droplets their IPv6 allocation via the
+# metadata service but never rewrites cloud-init's netplan for it, so the
+# address has to be configured by hand. A separate netplan file keeps
+# cloud-init from clobbering it on a rebuild. accept-ra off: Docker turns
+# on ipv6 forwarding for its networks, and a forwarding host ignores RAs
+# anyway - the static route is the only one we want.
+META=http://169.254.169.254/metadata/v1/interfaces/public/0/ipv6
+V6_ADDR=$(curl -fs -m 3 "$META/address" 2>/dev/null || true)
+V6_CIDR=$(curl -fs -m 3 "$META/cidr" 2>/dev/null || true)
+V6_GW=$(curl -fs -m 3 "$META/gateway" 2>/dev/null || true)
+if [ -n "$V6_ADDR" ] && [ -n "$V6_GW" ]; then
+  cat > /etc/netplan/60-ipv6.yaml <<CONF
+network:
+  version: 2
+  ethernets:
+    eth0:
+      accept-ra: false
+      addresses: ["$V6_ADDR/${V6_CIDR:-64}"]
+      routes:
+        - to: "::/0"
+          via: "$V6_GW"
+CONF
+  chmod 600 /etc/netplan/60-ipv6.yaml
+  netplan apply
+  echo "IPv6 configured: $V6_ADDR via $V6_GW"
+fi
+
+# The kamal docker network must exist with IPv6 enabled BEFORE kamal's own
+# `docker network create kamal` (kamal treats "already exists" as fine).
+# Docker cannot add IPv6 to an existing network, and without it a v6 client
+# reaches the containers through docker-proxy with its source address
+# rewritten to the bridge gateway - every per-IP defence would see
+# 172.18.0.1. The ULA /64 is auto-assigned; ip6tables (docker-managed by
+# default) DNATs published ports and masquerades egress.
+if ! docker network inspect kamal >/dev/null 2>&1; then
+  docker network create --ipv6 --subnet 172.18.0.0/16 --gateway 172.18.0.1 kamal
+  echo "Created IPv6-enabled kamal network"
+fi
 
 # --- Kernel/network hardening ------------------------------------------------
 cat > /etc/sysctl.d/60-hardening.conf <<'CONF'

@@ -166,6 +166,32 @@ class OutboundDelivererTest < ActiveSupport::TestCase
     assert resolved.fallback
   end
 
+  # An MX name this host cannot resolve (or reach in any address family)
+  # is this host's failure, not the message's: try the next MX rather
+  # than let the SocketError escape the per-host loop.
+  test "a resolution failure on one MX moves on to the next" do
+    dns = FakeDns.new(mx: { "remote.test" => Answer.new(
+      records: [ [ 10, "mx1.remote.test" ], [ 20, "mx2.remote.test" ] ], secure: false) })
+    tried = []
+    deliverer = deliverer_with(dns) do |host, _policy|
+      tried << host
+      raise SocketError, "getaddrinfo: Name or service not known" if host == "mx1.remote.test"
+
+      true
+    end
+
+    assert deliverer.deliver(outbound)
+    assert_equal %w[mx1.remote.test mx2.remote.test], tried
+  end
+
+  test "every MX failing resolution is a transient error naming them" do
+    dns = FakeDns.new(mx: { "remote.test" => Answer.new(records: [ [ 10, "mx1.remote.test" ] ], secure: false) })
+    deliverer = deliverer_with(dns) { |_host, _policy| raise SocketError, "no address" }
+
+    error = assert_raises(MailOnRails::OutboundDeliverer::TransientError) { deliverer.deliver(outbound) }
+    assert_match(/mx1\.remote\.test: SocketError: no address/, error.message)
+  end
+
   # --- policy selection and TLS-RPT events ---
 
   test "a secure MX with secure usable TLSA delivers under DANE and records a tlsa success" do

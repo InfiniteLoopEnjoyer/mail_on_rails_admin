@@ -100,6 +100,12 @@ servers:
         # for the duration of a store call; size the pool for the
         # listener's concurrency, not for Puma.
         RAILS_MAX_THREADS: 16
+        # IPv6: Docker DNATs a v6 client to the container's OWN v6
+        # address (never to its v4 one), so on an IPv6-enabled docker
+        # network the daemon must listen dual-stack. The gem falls back
+        # to 0.0.0.0 with a warning where the container has no IPv6, so
+        # "::" is safe everywhere; see docs/split.md "IPv6".
+        # SMTP_HOST: "::"
 
   # The IMAP server: IMAP (143) and IMAPS (993).
   imap:
@@ -121,6 +127,8 @@ servers:
         # IMAP IDLE holds many long-lived connections; each store call
         # checks a pool connection out only for its own duration.
         RAILS_MAX_THREADS: 16
+        # Dual-stack bind - see the smtp role.
+        # MAIL_ON_RAILS_HOST: "::"
 
 # Enable SSL auto certification via Let's Encrypt and allow for multiple apps on a single web server.
 # If used with Cloudflare, set encryption mode in SSL/TLS setting to "Full" to enable CF-to-app encryption.

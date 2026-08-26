@@ -68,6 +68,49 @@ The mail containers run this same app image (`bin/mail_server` boots
 keys, Solid Cable, and `LiveConnectionsBroadcaster` — nothing is special
 about them except the command.
 
+### IPv6
+
+The mail ports are dual-stack since 2026-08-26. Three things have to
+line up, and each one failing is silent rather than loud:
+
+1. **The docker network must be IPv6-enabled.** Docker publishes
+   `[::]:25` even on an IPv4-only network — but then it is
+   `docker-proxy` (userland) forwarding to the container over v4, and
+   the container sees every v6 client as the bridge gateway
+   (`172.18.0.1`): bans, DNSBL, FCrDNS, throttles and the honeypot all
+   key on the wrong address. On an IPv6-enabled network ip6tables DNATs
+   straight to the container's own ULA address and the real source is
+   preserved. Docker cannot add IPv6 to an existing network; the
+   `docker-setup` hook pre-creates `kamal` with `--ipv6` on a fresh host
+   (kamal's own `docker network create kamal` tolerates "already
+   exists"). On an existing host: stop everything, `docker network rm
+   kamal && docker network create --ipv6 --subnet 172.18.0.0/16
+   --gateway 172.18.0.1 kamal`, then `kamal accessory reboot all`,
+   `kamal proxy reboot`, `kamal deploy`.
+2. **The daemon must listen on `::`** (`SMTP_HOST` / `MAIL_ON_RAILS_HOST`
+   on the roles): the DNAT targets the container's v6 address, never its
+   v4 one, so a `0.0.0.0` listener refuses every v6 connection. The gem
+   falls back to `0.0.0.0` with a warning where the container has no
+   IPv6, so `::` is safe on every host. IPv4 peers arrive v4-mapped
+   (`::ffff:a.b.c.d`) and `Netserv.canonical_ip` turns them back into
+   plain IPv4 at accept time.
+3. **DNS:** an `AAAA` for the mail host plus a matching `PTR` (DO sets
+   the v6 PTR from the droplet name). `v=spf1 mx -all` covers the AAAA
+   automatically; MTA-STS, DKIM and DANE are name-based. Outbound is
+   Ruby's Happy Eyeballs — it prefers v6 as soon as the container has a
+   route — and Gmail hard-bounces v6 senders whose PTR does not
+   forward-confirm, so the AAAA must be visible before outbound v6 is
+   allowed (a temporary `ip6tables -I DOCKER-USER -s <ula>/64 -p tcp
+   --dport 25 -j REJECT --reject-with tcp-reset` holds it back).
+
+The host itself: DigitalOcean's cloud-init netplan never gains the v6
+address after the panel switch; `docker-setup` writes
+`/etc/netplan/60-ipv6.yaml` from the metadata service. ufw (v4 and v6)
+governs only host sockets, never Docker's DNAT'd ports. The
+`post-deploy` hook probes every mail port on `127.0.0.1` and on the
+host's global v6 address. `METRICS_ALLOW_IPS` is a literal allowlist —
+a scraper arriving over v6 needs its v6 address listed.
+
 ## Database as the control plane
 
 No HTTP between web and the listeners. Two kinds of rows, all in core:

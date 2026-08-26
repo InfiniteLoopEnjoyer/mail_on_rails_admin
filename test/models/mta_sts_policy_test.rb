@@ -37,13 +37,37 @@ class MtaStsPolicyTest < ActiveSupport::TestCase
   def sts_txt(id) = { "_mta-sts.example.com" => [ "v=STSv1; id=#{id}" ] }
 
   # Pin the SSRF guard's answer so fetch tests never touch real DNS.
-  def with_routable_ip(ip = "203.0.114.10")
+  def with_routable_ip(*ips)
+    ips = [ "203.0.114.10" ] if ips.empty?
     singleton = MailOnRails::MtaStsPolicy.singleton_class
-    original = MailOnRails::MtaStsPolicy.method(:routable_policy_ip)
-    singleton.define_method(:routable_policy_ip) { |_host| ip }
+    original = MailOnRails::MtaStsPolicy.method(:routable_policy_ips)
+    singleton.define_method(:routable_policy_ips) { |_host| ips }
     yield
   ensure
-    singleton.define_method(:routable_policy_ip, original)
+    singleton.define_method(:routable_policy_ips, original)
+  end
+
+  # A Net::HTTP stand-in: records the pinned address via ipaddr=, and
+  # request_get hands +on_ipaddr+ that address (raise there to simulate an
+  # unreachable one) before yielding +response+.
+  def fake_http(on_ipaddr:, response: nil)
+    http = Object.new
+    %i[use_ssl= open_timeout= read_timeout= max_retries=].each do |setter|
+      http.define_singleton_method(setter) { |_| }
+    end
+    http.define_singleton_method(:ipaddr=) { |address| @address = address }
+    http.define_singleton_method(:request_get) do |_path, &blk|
+      on_ipaddr.call(@address)
+      blk.call(response)
+    end
+    http
+  end
+
+  def ok_response(body)
+    response = Object.new
+    response.define_singleton_method(:is_a?) { |klass| klass == Net::HTTPOK }
+    response.define_singleton_method(:read_body) { |&blk| blk.call(body) }
+    response
   end
 
   # Pin what the policy host resolves to (real Addrinfo objects, no network).
@@ -201,7 +225,7 @@ class MtaStsPolicyTest < ActiveSupport::TestCase
     %w[10.0.0.1 127.0.0.1 169.254.169.254 172.16.0.9 192.168.1.1 ::1 fe80::1 fc00::1].each do |address|
       error = with_resolved_addresses([ address ]) do
         assert_raises(MailOnRails::MtaStsPolicy::FetchError) do
-          MailOnRails::MtaStsPolicy.routable_policy_ip("mta-sts.example.com")
+          MailOnRails::MtaStsPolicy.routable_policy_ips("mta-sts.example.com")
         end
       end
       assert_match(/non-routable/, error.message, address)
@@ -211,14 +235,71 @@ class MtaStsPolicyTest < ActiveSupport::TestCase
   test "a mixed public and private RRset is refused outright, not tie-broken" do
     with_resolved_addresses([ "203.0.114.10", "10.0.0.1" ]) do
       assert_raises(MailOnRails::MtaStsPolicy::FetchError) do
-        MailOnRails::MtaStsPolicy.routable_policy_ip("mta-sts.example.com")
+        MailOnRails::MtaStsPolicy.routable_policy_ips("mta-sts.example.com")
       end
     end
   end
 
-  test "a globally-routable policy host pins to its first resolved address" do
-    with_resolved_addresses([ "203.0.114.10", "2606:4700::1111" ]) do
-      assert_equal "203.0.114.10", MailOnRails::MtaStsPolicy.routable_policy_ip("mta-sts.example.com")
+  test "a globally-routable policy host yields its addresses in resolver order" do
+    with_resolved_addresses([ "2606:4700::1111", "203.0.114.10" ]) do
+      assert_equal [ "2606:4700::1111", "203.0.114.10" ],
+                   MailOnRails::MtaStsPolicy.routable_policy_ips("mta-sts.example.com")
+    end
+  end
+
+  # A dual-stack worker resolves the policy host's AAAA first; if that
+  # address is unreachable (a broken v6 path, a host with no v6 route) the
+  # fetch must go on to the next address rather than report a fetch error.
+  test "an unreachable first address falls through to the next one" do
+    tried = []
+    http = fake_http(on_ipaddr: lambda { |address|
+      tried << address
+      raise Errno::ECONNREFUSED if address.include?(":")
+    }, response: ok_response(VALID_BODY))
+    original = Net::HTTP.method(:new)
+    Net::HTTP.singleton_class.define_method(:new) { |*_args| http }
+    begin
+      body = with_routable_ip("2606:4700::1111", "203.0.114.10") do
+        MailOnRails::MtaStsPolicy.fetch_policy_body("example.com")
+      end
+      assert_equal VALID_BODY, body
+      assert_equal [ "2606:4700::1111", "203.0.114.10" ], tried
+    ensure
+      Net::HTTP.singleton_class.define_method(:new, original)
+    end
+  end
+
+  test "every address unreachable is a fetch error naming the last address" do
+    http = fake_http(on_ipaddr: ->(_address) { raise Errno::EHOSTUNREACH }, response: nil)
+    original = Net::HTTP.method(:new)
+    Net::HTTP.singleton_class.define_method(:new) { |*_args| http }
+    begin
+      error = with_routable_ip("2606:4700::1111", "203.0.114.10") do
+        assert_raises(MailOnRails::MtaStsPolicy::FetchError) { MailOnRails::MtaStsPolicy.fetch_policy_body("example.com") }
+      end
+      assert_match(/203\.0\.114\.10.*EHOSTUNREACH/, error.message)
+    ensure
+      Net::HTTP.singleton_class.define_method(:new, original)
+    end
+  end
+
+  # What the server SAID on the first address that answered is final - a
+  # 404 is not "try the other address family".
+  test "an HTTP error on a reachable address is not retried elsewhere" do
+    tried = []
+    not_found = Object.new
+    not_found.define_singleton_method(:is_a?) { |_klass| false }
+    not_found.define_singleton_method(:code) { "404" }
+    http = fake_http(on_ipaddr: ->(address) { tried << address }, response: not_found)
+    original = Net::HTTP.method(:new)
+    Net::HTTP.singleton_class.define_method(:new) { |*_args| http }
+    begin
+      with_routable_ip("2606:4700::1111", "203.0.114.10") do
+        assert_raises(MailOnRails::MtaStsPolicy::FetchError) { MailOnRails::MtaStsPolicy.fetch_policy_body("example.com") }
+      end
+      assert_equal [ "2606:4700::1111" ], tried
+    ensure
+      Net::HTTP.singleton_class.define_method(:new, original)
     end
   end
 end
