@@ -12,33 +12,48 @@ class EmailAccountsController < ApplicationController
   rate_limit to: 20, within: 10.minutes, only: %i[create update destroy generate_password],
              with: -> { redirect_to root_path, alert: "Try again later." }
 
+  # Each auto-created system account type gets its own spaced, labelled
+  # section on the index, in this order; regular mailboxes lead. The
+  # symbol is what #index buckets into, the string is the section heading.
+  ACCOUNT_SECTIONS = [
+    [ :regular,     "Mailboxes" ],
+    [ :postmaster,  "Postmaster" ],
+    [ :fbl,         "Complaint reports (FBL)" ],
+    [ :unsubscribe, "Unsubscribe requests" ],
+    [ :bounce,      "Bounce processing (VERP)" ],
+    [ :dmarc,       "DMARC reports" ],
+    [ :tls_rpt,     "TLS reports" ]
+  ].freeze
+
   def index
     domain_names = MailOnRails::Domain.pluck(:name).to_set
     groups = accessible_email_accounts.order(:email).includes(:mailboxes).group_by do |account|
       local, _, domain = account.email.partition("@")
-      if domain_names.include?(domain) && local == MailOnRails::Domain::DMARC_LOCAL_PART
-        :dmarc
-      elsif domain_names.include?(domain) && local == MailOnRails::Domain::TLS_RPT_LOCAL_PART
-        :tls_rpt
-      elsif domain_names.include?(domain) && local == MailOnRails::Domain::POSTMASTER_LOCAL_PART
-        :postmaster
-      elsif domain_names.include?(domain) &&
-            [ MailOnRails::Domain::FBL_LOCAL_PART, MailOnRails::Domain::UNSUBSCRIBE_LOCAL_PART,
-              MailOnRails::Domain::BOUNCE_LOCAL_PART ].include?(local)
-        # unsubscribe@ and bounce@ sit with the complaint accounts: all
-        # three are the suppression-ingestion family (IngestFblReportJob /
-        # IngestUnsubscribeJob / IngestBounceJob).
-        :fbl
-      else
-        :regular
+      next :regular unless domain_names.include?(domain)
+
+      # Each system local-part is its own section - fbl@, unsubscribe@ and
+      # bounce@ are distinct types (IngestFblReportJob / IngestUnsubscribeJob
+      # / IngestBounceJob) and no longer share one bucket.
+      case local
+      when MailOnRails::Domain::DMARC_LOCAL_PART       then :dmarc
+      when MailOnRails::Domain::TLS_RPT_LOCAL_PART     then :tls_rpt
+      when MailOnRails::Domain::POSTMASTER_LOCAL_PART  then :postmaster
+      when MailOnRails::Domain::FBL_LOCAL_PART         then :fbl
+      when MailOnRails::Domain::UNSUBSCRIBE_LOCAL_PART then :unsubscribe
+      when MailOnRails::Domain::BOUNCE_LOCAL_PART      then :bounce
+      else :regular
       end
     end
-    @postmaster_accounts = groups.fetch(:postmaster, [])
-    @fbl_accounts = groups.fetch(:fbl, [])
-    @dmarc_accounts = groups.fetch(:dmarc, [])
-    @tls_rpt_accounts = groups.fetch(:tls_rpt, [])
-    @email_accounts = groups.fetch(:regular, [])
-    @email_accounts.sort_by! { |account| local, _, domain = account.email.partition("@"); [ domain, local ] }
+    groups.fetch(:regular, []).sort_by! do |account|
+      local, _, domain = account.email.partition("@")
+      [ domain, local ]
+    end
+    # An ordered list of [heading, accounts] for the non-empty sections,
+    # rendered uniformly by the view.
+    @account_sections = ACCOUNT_SECTIONS.filter_map do |key, heading|
+      accounts = groups.fetch(key, [])
+      [ heading, accounts ] if accounts.any?
+    end
     @unseen_counts = MailOnRails::EmailMessage.joins(:mailbox)
                                  .where(MailOnRails::Mailbox.table_name => { email_account_id: accessible_email_accounts.select(:id) })
                                  .where.not("flags LIKE ?", "%Seen%")

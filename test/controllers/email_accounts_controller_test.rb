@@ -77,23 +77,31 @@ class EmailAccountsControllerTest < ActionDispatch::IntegrationTest
     assert_select "turbo-cable-stream-source", 1
   end
 
-  test "index sorts regular accounts by domain then email and splits postmaster, fbl, dmarc and tls-rpt accounts into their own lists" do
+  test "index sorts regular accounts by domain then email and gives each system account type its own labelled section" do
     MailOnRails::EmailAccount.create!(email: "zed@aardvark.test", name: "Zed", password: "secret123")
     MailOnRails::EmailAccount.create!(email: "amy@zebra.test", name: "Amy", password: "secret123")
     domain = MailOnRails::Domain.create!(name: "example.com")
 
     get root_url
     assert_response :success
-    assert_select "ul", 5
-    emails = css_select("ul:first-of-type .primary").map(&:text)
-    assert_equal [ "zed@aardvark.test", "carol@example.com", "amy@zebra.test" ], emails
-    assert_equal [ domain.postmaster_address ], css_select("ul:nth-of-type(2) .primary").map(&:text)
-    # bounce@ and unsubscribe@ sit with the complaint accounts (the
-    # suppression-ingestion family).
-    assert_equal [ domain.bounce_address, domain.fbl_address, domain.unsubscribe_address ],
-                 css_select("ul:nth-of-type(3) .primary").map(&:text)
-    assert_equal [ domain.dmarc_address ], css_select("ul:nth-of-type(4) .primary").map(&:text)
-    assert_equal [ domain.tls_rpt_address ], css_select("ul:last-of-type .primary").map(&:text)
+
+    # One labelled section per type: regular mailboxes plus the six system
+    # account types, each its own <section> with an <h2> heading and a <ul>.
+    assert_select "section", 7
+    assert_equal [ "Mailboxes", "Postmaster", "Complaint reports (FBL)", "Unsubscribe requests",
+                   "Bounce processing (VERP)", "DMARC reports", "TLS reports" ],
+                 css_select("section h2").map { |h| h.text.strip }
+
+    section_emails = ->(nth) { css_select("section:nth-of-type(#{nth}) .primary").map(&:text) }
+    assert_equal [ "zed@aardvark.test", "carol@example.com", "amy@zebra.test" ], section_emails.call(1)
+    assert_equal [ domain.postmaster_address ], section_emails.call(2)
+    # fbl@, unsubscribe@ and bounce@ are no longer lumped together - each
+    # is its own section now.
+    assert_equal [ domain.fbl_address ], section_emails.call(3)
+    assert_equal [ domain.unsubscribe_address ], section_emails.call(4)
+    assert_equal [ domain.bounce_address ], section_emails.call(5)
+    assert_equal [ domain.dmarc_address ], section_emails.call(6)
+    assert_equal [ domain.tls_rpt_address ], section_emails.call(7)
   end
 
   test "account page subscribes to live updates" do

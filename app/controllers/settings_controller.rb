@@ -20,6 +20,7 @@ class SettingsController < ApplicationController
     imap_limits: "IMAP limits",
     auth_bruteforce: "Authentication throttling",
     outbound: "Outbound delivery",
+    reporting: "Report ingestion",
     honeypot: "Honeypot",
     retention: "Retention"
   }.freeze
