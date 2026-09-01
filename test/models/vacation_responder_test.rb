@@ -122,11 +122,15 @@ class VacationResponderTest < ActiveSupport::TestCase
   end
 
   test "a reply consumes a send quota slot and an exhausted quota skips the reply" do
-    quota = MailOnRails::SendQuota.new(limit: 1, window: 3600)
+    # The window must outlast the REPLY_WINDOW travel below: the durable
+    # quota expires slots by wall clock (unlike the old in-memory counter,
+    # which used the monotonic clock and so ignored travel), so a shorter
+    # window would free the slot over the 7-day jump and hide the quota.
+    quota = MailOnRails::SendQuota.new(limit: 1, window: (MailOnRails::VacationResponder::REPLY_WINDOW + 1.hour).to_i)
     assert respond(inbound, quota: quota)
 
     travel(MailOnRails::VacationResponder::REPLY_WINDOW + 1.minute) do
-      assert_not respond(inbound, quota: quota), "an empty quota must silence the responder"
+      assert_not respond(inbound, quota: quota), "an exhausted quota must silence the responder"
     end
     assert_equal 1, MailOnRails::SmtpOutboundMessage.count
   end

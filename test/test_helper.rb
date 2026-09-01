@@ -30,6 +30,17 @@ module ActiveSupport
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
 
+    # Re-establish the DB-tier wiring before every test. Some tests call
+    # MailOnRails::Settings.reset! (to read a pure ENV/default config),
+    # which installs a fresh DynamicOverrides with no store callable -
+    # detaching the DB reads set up at load. Without this, a later test in
+    # the same worker that reads a saved Setting would silently get the
+    # default instead. Cheap and idempotent, so it just runs everywhere.
+    setup do
+      MailOnRails::Settings.cache_ttl = 0
+      MailOnRails::Settings.store = -> { MailOnRails::Setting.override_rows }
+    end
+
     # Add more helper methods to be used by all tests here...
   end
 end

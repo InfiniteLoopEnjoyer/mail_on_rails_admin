@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_01_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -96,12 +96,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
     t.string "outcome", null: false
     t.boolean "rollup", default: false, null: false
     t.string "source", null: false
+    t.string "throttle_key"
     t.datetime "updated_at", null: false
     t.string "username"
     t.index ["account_exists", "occurred_at"], name: "idx_on_account_exists_occurred_at_4c65b55b3c"
     t.index ["ip", "occurred_at"], name: "index_mail_on_rails_auth_attempts_on_ip_and_occurred_at"
     t.index ["ip", "source", "occurred_at"], name: "index_auth_attempts_on_rollup_key", unique: true, where: "rollup"
     t.index ["occurred_at"], name: "index_mail_on_rails_auth_attempts_on_occurred_at"
+    t.index ["throttle_key", "occurred_at"], name: "index_auth_attempts_on_throttle_key_and_occurred_at"
     t.index ["username"], name: "index_mail_on_rails_auth_attempts_on_username"
   end
 
@@ -155,6 +157,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
     t.string "role"
     t.boolean "rollup", default: false, null: false
     t.float "tarpit_seconds"
+    t.string "throttle_key"
     t.boolean "tls", default: false, null: false
     t.bigint "transcript_id"
     t.datetime "updated_at", null: false
@@ -163,6 +166,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
     t.index ["protocol", "closed_at"], name: "idx_on_protocol_closed_at_305bc62ee1"
     t.index ["protocol", "ip", "closed_at"], name: "idx_on_protocol_ip_closed_at_4886299b1c"
     t.index ["protocol", "ip", "closed_at"], name: "index_closed_connections_on_rollup_key", unique: true, where: "rollup"
+    t.index ["protocol", "throttle_key", "closed_at"], name: "index_closed_connections_on_protocol_throttle_key_closed_at"
   end
 
   create_table "mail_on_rails_connection_kicks", force: :cascade do |t|
@@ -403,6 +407,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
     t.index ["protocol", "connected_at"], name: "index_open_connections_on_protocol_and_connected_at"
   end
 
+  create_table "mail_on_rails_send_quota_slots", force: :cascade do |t|
+    t.string "account_key", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "used", default: 0, null: false
+    t.datetime "window_start", null: false
+    t.index ["account_key", "window_start"], name: "index_send_quota_slots_on_account_and_window", unique: true
+    t.index ["window_start"], name: "index_send_quota_slots_on_window_start"
+  end
+
   create_table "mail_on_rails_session_transcripts", force: :cascade do |t|
     t.string "close_reason"
     t.datetime "closed_at", null: false
@@ -445,6 +459,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_000000) do
     t.integer "status", default: 0, null: false
     t.datetime "updated_at", null: false
     t.index ["status", "next_attempt_at"], name: "idx_on_status_next_attempt_at_d338e4cede"
+  end
+
+  create_table "mail_on_rails_smtp_receipts", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "digest", limit: 64, null: false
+    t.index ["created_at"], name: "index_smtp_receipts_on_created_at"
+    t.index ["digest"], name: "index_smtp_receipts_on_digest", unique: true
   end
 
   create_table "mail_on_rails_suppressed_recipients", force: :cascade do |t|

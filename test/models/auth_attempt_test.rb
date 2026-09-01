@@ -177,9 +177,13 @@ class AuthAttemptTest < ActiveSupport::TestCase
     assert_equal [ [ "92.118.39.0/24", 3 ], [ "203.0.113.0/24", 1 ] ], MailOnRails::AuthAttempt.top_ranges
   end
 
-  test "top_ranges leaves non-ipv4 sources alone" do
+  test "top_ranges groups IPv6 sources by /64" do
+    # A guesser with a routed /64 would otherwise mint a fresh address per
+    # attempt; the rollup keys on the /64 (the throttle key) so the whole
+    # campaign shows as one range.
     record(ip: "2001:db8::1")
-    assert_equal [ [ "2001:db8::1", 1 ] ], MailOnRails::AuthAttempt.top_ranges
+    record(ip: "2001:db8::2")
+    assert_equal [ [ "2001:db8::/64", 2 ] ], MailOnRails::AuthAttempt.top_ranges
   end
 
   test "rollup counts carry into the analysis totals" do
@@ -224,11 +228,12 @@ class AuthAttemptTest < ActiveSupport::TestCase
     assert rows.last.real_account
   end
 
-  test "range_detail treats a non-IPv4 range as a single address" do
+  test "range_detail expands an IPv6 /64 range to its member addresses" do
     record(ip: "2001:db8::5")
     record(ip: "2001:db8::6")
+    record(ip: "2001:dead::9") # a different /64 - must not appear
 
-    rows = MailOnRails::AuthAttempt.range_detail("2001:db8::5")
-    assert_equal [ "2001:db8::5" ], rows.map(&:ip)
+    rows = MailOnRails::AuthAttempt.range_detail("2001:db8::/64")
+    assert_equal [ "2001:db8::5", "2001:db8::6" ], rows.map(&:ip).sort
   end
 end
