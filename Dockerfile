@@ -67,7 +67,7 @@ FROM base
 # in-process in the mail_on_rails gem, against its embedded IANA root
 # trust anchor - any recursive upstream works, untrusted.)
 
-# The bundle carries a fixed json (2.21.1); remove the base image's stale
+# The bundle carries a fixed json (2.21.2); remove the base image's stale
 # default gem (json 2.18.0, CVE-2026-33210) - spec AND stdlib copies, since
 # plain `require "json"` outside bundler loads the stdlib file straight off
 # $LOAD_PATH and would silently get 2.18.0.

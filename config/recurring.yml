@@ -81,6 +81,20 @@ production:
     command: "MailOnRails::IpEnrichment.prune!"
     schedule: every day at 5:27am
 
+  # The shared outbound send quota lives in minute buckets per account so
+  # every process (web, SMTP, jobs) counts against one budget; writers
+  # prune their own account, this sweeps accounts that stopped sending.
+  prune_send_quota_slots:
+    command: "MailOnRails::SendQuotaSlot.prune!"
+    schedule: every hour at minute 37
+
+  # Inbound dedupe receipts (a sender that never read our 250 redelivers
+  # the same message) are only meaningful within the retry window;
+  # writers prune opportunistically, this catches quiet periods.
+  prune_smtp_receipts:
+    command: "MailOnRails::SmtpReceipt.prune!"
+    schedule: every day at 4:51am
+
   # Yesterday's outbound TLS outcomes, reported to every recipient
   # domain that publishes a TLS-RPT policy (RFC 8460).
   send_tls_rpt_reports:
