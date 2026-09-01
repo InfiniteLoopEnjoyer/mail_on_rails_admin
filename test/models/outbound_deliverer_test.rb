@@ -10,13 +10,25 @@ class OutboundDelivererTest < ActiveSupport::TestCase
   class FakeDns
     attr_reader :tlsa_calls
 
-    def initialize(mx: {}, tlsa: {}, txt: {})
-      @mx, @tlsa, @txt = mx, tlsa, txt
+    def initialize(mx: {}, tlsa: {}, txt: {}, a: {}, aaaa: {})
+      @mx, @tlsa, @txt, @a, @aaaa = mx, tlsa, txt, a, aaaa
       @tlsa_calls = []
     end
 
     def mx_answer(name)
       @mx.fetch(name) { Answer.new(records: [], secure: false) }
+    end
+
+    # OutboundDeliverer#vet_targets resolves each MX name to addresses and
+    # drops non-routable ones (M4). Default to a single routable public
+    # address so any test host resolves; a test passes a:/aaaa: to force a
+    # specific (or empty, or non-routable) result.
+    def a(name)
+      @a.fetch(name, [ "93.184.216.34" ])
+    end
+
+    def aaaa(name)
+      @aaaa.fetch(name, [])
     end
 
     def tlsa(name)
@@ -56,7 +68,7 @@ class OutboundDelivererTest < ActiveSupport::TestCase
   # (host, policy) and its result/raise stands in for the SMTP session.
   def deliverer_with(dns, &network)
     deliverer = MailOnRails::OutboundDeliverer.new(dns: dns)
-    deliverer.define_singleton_method(:send_via) do |host, _port, _message, policy:, auth: {}|
+    deliverer.define_singleton_method(:send_via) do |host, _port, _message, policy:, auth: {}, **_kw|
       network.call(host, policy)
     end
     deliverer
@@ -300,7 +312,7 @@ class OutboundDelivererTest < ActiveSupport::TestCase
     def fake_smtp.start(**) = raise(Net::SMTPUnsupportedCommand, "STARTTLS is not supported on this server")
 
     deliverer = MailOnRails::OutboundDeliverer.new(dns: FakeDns.new(mx: secure_mx))
-    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy| fake_smtp }
+    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy, **_kw| fake_smtp }
 
     assert_raises(MailOnRails::OutboundDeliverer::TransientError) { deliverer.deliver(outbound) }
     event = MailOnRails::TlsRptEvent.sole
@@ -322,7 +334,7 @@ class OutboundDelivererTest < ActiveSupport::TestCase
     def fake_smtp.finish = raise(OpenSSL::SSL::SSLError, "SSL_read: unexpected eof while reading")
 
     deliverer = MailOnRails::OutboundDeliverer.new(dns: FakeDns.new)
-    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy| fake_smtp }
+    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy, **_kw| fake_smtp }
 
     error = assert_raises(MailOnRails::OutboundDeliverer::PermanentError) { deliverer.deliver(outbound) }
     assert_match(/550 5\.7\.1/, error.message)
@@ -338,7 +350,7 @@ class OutboundDelivererTest < ActiveSupport::TestCase
     def fake_smtp.finish = raise(OpenSSL::SSL::SSLError, "SSL_read: unexpected eof while reading")
 
     deliverer = MailOnRails::OutboundDeliverer.new(dns: FakeDns.new)
-    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy| fake_smtp }
+    deliverer.define_singleton_method(:build_smtp) { |_h, _p, _policy, **_kw| fake_smtp }
 
     assert deliverer.deliver(outbound), "an accepted message must not be re-sent because QUIT failed"
   end
@@ -445,7 +457,7 @@ class OutboundDelivererTest < ActiveSupport::TestCase
 
   def deliverer_with_session(session, dns: FakeDns.new, modes: [])
     deliverer = MailOnRails::OutboundDeliverer.new(dns: dns)
-    deliverer.define_singleton_method(:build_smtp) do |_h, _p, policy|
+    deliverer.define_singleton_method(:build_smtp) do |_h, _p, policy, **_kw|
       modes << policy.mode
       session
     end
