@@ -156,7 +156,11 @@ class MailboxesController < ApplicationController
       scan_status = verdict.clean? ? "clean" : "unscanned"
     end
 
-    MailOnRails::EmailMessage.deliver_raw(@mailbox, raw, internal_date: original_date(mail), scan_status: scan_status)
+    message = MailOnRails::EmailMessage.deliver_raw(@mailbox, raw, internal_date: original_date(mail),
+                                                                  scan_status: scan_status)
+    # Importing straight into Junk is the user's spam verdict, as an IMAP
+    # APPEND into Junk is.
+    MailOnRails::JunkFeedback.filed(message, from: nil, to: @mailbox, source: "import")
     nil
   rescue MailOnRails::EmailMessage::OverQuota => e
     e.message

@@ -60,18 +60,30 @@ class EmailMessagesController < ApplicationController
   # into Junk or back to INBOX. The moved message is a new row with a new
   # UID, so both land back on the folder the message left. Drafts are the
   # owner's own writing - nothing there to mark.
+  #
+  # The move is also the user's verdict on the sender (JunkFeedback via
+  # move_to!): a deny/allow SenderRule for the From address and a Bayes
+  # learn. The flash reads the rule back rather than assuming it - a
+  # message without a From, or from the account's own address, moves
+  # without writing one.
   def mark_spam
     head :forbidden and return if @email_message.draft? || @mailbox.junk?
 
-    @email_message.move_to!(@email_account.junk_mailbox)
-    redirect_to email_account_mailbox_path(@email_account, @mailbox), notice: "Moved to Junk."
+    moved = @email_message.move_to!(@email_account.junk_mailbox, source: "web")
+    rule = sender_rule_for(moved)
+    notice = "Moved to Junk."
+    notice += " Future mail from #{rule.address} will be filed there." if rule&.deny?
+    redirect_to email_account_mailbox_path(@email_account, @mailbox), notice: notice
   end
 
   def unmark_spam
     head :forbidden and return unless @mailbox.junk?
 
-    @email_message.move_to!(@email_account.inbox)
-    redirect_to email_account_mailbox_path(@email_account, @mailbox), notice: "Moved to INBOX."
+    moved = @email_message.move_to!(@email_account.inbox, source: "web")
+    rule = sender_rule_for(moved)
+    notice = "Moved to INBOX."
+    notice += " Future mail from #{rule.address} will be delivered there." if rule&.allow?
+    redirect_to email_account_mailbox_path(@email_account, @mailbox), notice: notice
   end
 
   # "Delete" from the message page: an IMAP-style move into Trash. Inside
@@ -165,6 +177,16 @@ class EmailMessagesController < ApplicationController
   def download_basename
     subject = @email_message.subject.to_s.gsub(/[^\w \-]/, "").strip.truncate(60, omission: "")
     [ "message", @email_message.id, subject.presence ].compact.join("-").tr(" ", "-")
+  end
+
+  # The SenderRule a Junk move just wrote for the moved message's From, if
+  # any (JunkFeedback skips messages without one and the account's own
+  # addresses).
+  def sender_rule_for(moved)
+    address = moved.from_address.to_s.strip.downcase
+    return if address.blank?
+
+    @email_account.sender_rules.find_by(address: address)
   end
 
   # The scoped root proves the account is accessible; the nested finds

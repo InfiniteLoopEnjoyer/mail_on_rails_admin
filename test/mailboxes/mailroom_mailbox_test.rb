@@ -14,6 +14,7 @@ require_relative "../test_helpers/sealed_ingress_helper"
 # forge. So every inbound message is clamav-scanned (not clean -> Quarantine,
 # deduped by Message-ID) and rspamd-analyzed (except authenticated submitters).
 class MailroomMailboxTest < ActionMailbox::TestCase
+  include ActiveJob::TestHelper
   include ClamavStubHelper
   include RspamdStubHelper
   include SealedIngressHelper
@@ -303,6 +304,115 @@ class MailroomMailboxTest < ActionMailbox::TestCase
 
   def junk
     @account.find_mailbox(MailOnRails::Mailbox::JUNK)
+  end
+
+  # -- sender rules ------------------------------------------------------------
+  # The account's own allow/deny verdicts on a sender (written by its Junk
+  # moves or by hand) come before rspamd's score - except that an allow
+  # never overrides a DMARC failure, and nothing overrides quarantine.
+
+  def rule(address, verdict)
+    MailOnRails::SenderRule.record!(@account, address, verdict, source: "manual")
+  end
+
+  # rspamd calls it spam but the From authenticated - the shape of a
+  # legitimate sender whose newsletter scores badly.
+  def spam_verdict_authenticated
+    MailOnRails::RspamdAnalyzer::Result.new(
+      status: :ok, action: "add header", score: 8.4, required_score: 6.0,
+      spf: "pass", dkim: "pass", dmarc: "pass", auth_results: "mail.test; spf=pass; dkim=pass; dmarc=pass"
+    )
+  end
+
+  test "a deny rule files a clean-scoring sender into Junk" do
+    rule("sender@remote.test", "deny")
+    @account.update!(vacation_enabled: true, vacation_body: "Away.")
+
+    scanning(CLEAN) do
+      with_rspamd(enabled: true, analyze: pass_verdict) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_empty @account.inbox.email_messages
+    message = junk.email_messages.sole
+    assert_equal "no action", message.spam_action, "rspamd's own verdict is still recorded"
+    assert_equal 0, MailOnRails::SmtpOutboundMessage.count, "junk-filed mail gets no vacation reply"
+  end
+
+  test "a domain-wide deny rule matches every address at the domain" do
+    rule("@remote.test", "deny")
+
+    scanning(CLEAN) do
+      with_rspamd(enabled: true, analyze: pass_verdict) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_equal 1, junk.email_messages.count
+  end
+
+  test "an allow rule delivers a spam-scored but authenticated sender to INBOX" do
+    rule("sender@remote.test", "allow")
+
+    scanning(CLEAN) do
+      with_rspamd(enabled: true, analyze: spam_verdict_authenticated) { receive_inbound_email_from_source(source) }
+    end
+
+    message = @account.inbox.email_messages.sole
+    assert_equal "add header", message.spam_action
+    assert_empty junk.email_messages
+  end
+
+  test "an allow rule does not override a DMARC failure" do
+    rule("sender@remote.test", "allow")
+
+    scanning(CLEAN) do
+      with_rspamd(enabled: true, analyze: spam_verdict) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_empty @account.inbox.email_messages
+    assert_equal 1, junk.email_messages.count
+  end
+
+  test "an allow rule with rspamd disabled delivers to INBOX" do
+    rule("sender@remote.test", "allow")
+
+    scanning(CLEAN) do
+      with_rspamd(enabled: false) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_equal 1, @account.inbox.email_messages.count
+  end
+
+  test "rules judge only unauthenticated mail" do
+    rule("sender@remote.test", "deny")
+
+    scanning(CLEAN) do
+      refuse_rspamd { receive_inbound_email_from_source(source(authenticated: "user@example.test")) }
+    end
+
+    assert_equal 1, @account.inbox.email_messages.count
+    assert_empty junk.email_messages
+  end
+
+  test "no rule overrides quarantine" do
+    rule("sender@remote.test", "allow")
+
+    # (rspamd still runs on the infected path - its verdict is stamped on
+    # the quarantined row - it just has no say in where the message goes.)
+    scanning(infected("Eicar-Test-Signature")) do
+      with_rspamd(enabled: true, analyze: pass_verdict) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_equal 1, quarantine.email_messages.count
+    assert_empty @account.inbox.email_messages
+  end
+
+  test "the mailroom's own filing into Junk is not a verdict on the sender" do
+    scanning(CLEAN) do
+      with_rspamd(enabled: true, analyze: spam_verdict) { receive_inbound_email_from_source(source) }
+    end
+
+    assert_equal 1, junk.email_messages.count
+    assert_empty @account.sender_rules
+    assert_no_enqueued_jobs only: MailOnRails::LearnSpamJob
   end
 
   test "a spam action files into Junk instead of INBOX" do

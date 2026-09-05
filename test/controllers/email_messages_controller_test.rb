@@ -29,6 +29,58 @@ class EmailMessagesControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
+  # -- Mark as spam / Not spam -------------------------------------------------
+  # The move is the user's verdict on the sender: a SenderRule for the From
+  # address, a Bayes learn, and a flash that says so.
+
+  test "mark_spam denies the sender and learns spam" do
+    message = MailOnRails::EmailMessage.deliver_raw(@account.inbox, RAW)
+
+    assert_enqueued_with(job: MailOnRails::LearnSpamJob) do
+      post mark_spam_email_account_mailbox_email_message_url(@account, @account.inbox, message)
+    end
+    assert_redirected_to email_account_mailbox_url(@account, @account.inbox)
+    assert_equal "Moved to Junk. Future mail from sender@remote.test will be filed there.", flash[:notice]
+
+    rule = @account.sender_rules.sole
+    assert_equal [ "sender@remote.test", "deny", "web" ], [ rule.address, rule.verdict, rule.source ]
+    assert_equal "spam", enqueued_jobs.last["arguments"].last
+  end
+
+  test "unmark_spam allows the sender and learns ham" do
+    junk = @account.junk_mailbox
+    message = MailOnRails::EmailMessage.deliver_raw(junk, RAW)
+    @account.sender_rules.create!(address: "sender@remote.test", verdict: "deny", source: "imap")
+
+    assert_enqueued_with(job: MailOnRails::LearnSpamJob) do
+      post unmark_spam_email_account_mailbox_email_message_url(@account, junk, message)
+    end
+    assert_equal "Moved to INBOX. Future mail from sender@remote.test will be delivered there.", flash[:notice]
+    assert_equal "allow", @account.sender_rules.sole.verdict
+    assert_equal "ham", enqueued_jobs.last["arguments"].last
+  end
+
+  test "deleting from Junk is not a verdict" do
+    junk = @account.junk_mailbox
+    message = MailOnRails::EmailMessage.deliver_raw(junk, RAW)
+
+    assert_no_enqueued_jobs only: MailOnRails::LearnSpamJob do
+      delete email_account_mailbox_email_message_url(@account, junk, message)
+    end
+    assert_empty @account.sender_rules
+    assert_equal 1, @account.trash_mailbox.email_messages.count
+  end
+
+  test "mark_spam on a message without a From learns but writes no rule" do
+    message = MailOnRails::EmailMessage.deliver_raw(@account.inbox, "Subject: anonymous\r\n\r\nbody\r\n")
+
+    assert_enqueued_with(job: MailOnRails::LearnSpamJob) do
+      post mark_spam_email_account_mailbox_email_message_url(@account, @account.inbox, message)
+    end
+    assert_equal "Moved to Junk.", flash[:notice]
+    assert_empty @account.sender_rules
+  end
+
   test "renders the analysis footer for an analyzed inbound message" do
     message = MailOnRails::EmailMessage.deliver_raw(@account.inbox, RAW,
                                        auth_results: "mail.test; spf=pass; dkim=fail; dmarc=pass",
@@ -473,7 +525,7 @@ class EmailMessagesControllerTest < ActionDispatch::IntegrationTest
     post mark_spam_email_account_mailbox_email_message_url(@account, @account.inbox, message)
 
     assert_redirected_to email_account_mailbox_url(@account, @account.inbox)
-    assert_equal "Moved to Junk.", flash[:notice]
+    assert_match(/\AMoved to Junk\./, flash[:notice])
     assert_empty @account.inbox.email_messages
     moved = @account.find_mailbox("Junk").email_messages.sole
     assert_equal "mail.test; spf=pass; dkim=pass; dmarc=pass", moved.auth_results
@@ -488,7 +540,7 @@ class EmailMessagesControllerTest < ActionDispatch::IntegrationTest
     post unmark_spam_email_account_mailbox_email_message_url(@account, junk, message)
 
     assert_redirected_to email_account_mailbox_url(@account, junk)
-    assert_equal "Moved to INBOX.", flash[:notice]
+    assert_match(/\AMoved to INBOX\./, flash[:notice])
     assert_empty junk.email_messages
     assert_equal 1, @account.inbox.email_messages.count
   end

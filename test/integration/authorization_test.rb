@@ -50,6 +50,25 @@ class AuthorizationTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_url
   end
 
+  # Sender rules are per-account, not an admin surface: a grant is the gate.
+  test "a member reaches the sender rules of a granted account only" do
+    member = users(:member)
+    granted = MailOnRails::EmailAccount.create!(email: "granted@example.com", password: "secret123")
+    other = MailOnRails::EmailAccount.create!(email: "other@example.com", password: "secret123")
+    member.email_accounts << granted
+    sign_in_as member
+
+    assert_difference "granted.sender_rules.count", 1 do
+      post email_account_sender_rules_url(granted), params: { sender_rule: { address: "x@remote.test", verdict: "deny" } }
+    end
+    assert_redirected_to email_account_url(granted)
+
+    assert_no_difference "MailOnRails::SenderRule.count" do
+      post email_account_sender_rules_url(other), params: { sender_rule: { address: "x@remote.test", verdict: "deny" } }
+    end
+    assert_response :not_found
+  end
+
   test "a member keeps their self-service surfaces" do
     member = users(:member)
     sign_in_as member

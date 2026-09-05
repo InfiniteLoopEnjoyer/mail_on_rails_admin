@@ -46,6 +46,31 @@ ul
           - else
             = total
 
+/ Sender rules are for anyone with access to the account
+/ (SenderRulesController allows members): the same people who click
+/ "Mark as spam", which writes these rows automatically.
+section.mt-8
+  h2.text-lg.font-bold Senders
+  p.mb-3.text-sm.text-slate-500.dark:text-slate-400
+    | Deny files a sender's mail into Junk; allow delivers it to INBOX even when it scores as spam, unless the message fails DMARC. Marking a message as spam or not spam adds a rule for its sender automatically. Write
+    code<> @example.com
+    | to match every address at a domain - a deny on a big provider junks everyone there.
+  ul
+    - @email_account.sender_rules.order(:address).each do |rule|
+      li.mb-2.flex.items-center.gap-3.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-2
+        - if rule.deny?
+          span.rounded.border.border-red-200.dark:border-red-900.px-2.py-0.5.text-xs.font-medium.text-red-700.dark:text-red-400 deny
+        - else
+          span.rounded.border.border-accent.px-2.py-0.5.text-xs.font-medium.text-accent allow
+        span.text-sm.font-medium= rule.address
+        span.text-xs.text-slate-500.dark:text-slate-400= rule.source
+        span.ml-auto
+          = button_to "Remove", email_account_sender_rule_path(@email_account, rule), method: :delete, class: "inline-block cursor-pointer rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-slate-800 dark:text-slate-100", form: { data: { turbo_confirm: "Remove the #{rule.verdict} rule for #{rule.address}?" } }
+  = form_with model: [ @email_account, MailOnRails::SenderRule.new ], class: "flex max-w-lg items-center gap-2" do |form|
+    = form.text_field :address, required: true, placeholder: "sender@example.com or @example.com", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm"
+    = form.select :verdict, [ [ "Deny (file into Junk)", "deny" ], [ "Allow (deliver to INBOX)", "allow" ] ], {}, class: "rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm"
+    = form.submit "Add rule", class: "inline-block cursor-pointer whitespace-nowrap rounded-md border border-accent bg-accent px-3.5 py-1.5 text-sm font-medium text-white"
+
 / Alias administration is admin-only (EmailAliasesController); hiding the
 / section for members is cosmetic - the controller is the enforcement.
 - if Current.user.admin?

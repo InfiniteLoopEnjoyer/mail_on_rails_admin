@@ -42,10 +42,12 @@ class FakeRspamd
   end
 
   # Reads the request line + headers and consumes the Content-Length body,
-  # returning the headers as a downcased-key Hash.
+  # returning the headers as a downcased-key Hash (plus the request path
+  # under "__path", so tests can tell /checkv2 from /learnspam).
   def self.read_request(conn)
     headers = {}
-    conn.gets # request line
+    request_line = conn.gets.to_s
+    headers["__path"] = request_line.split(" ")[1]
     while (line = conn.gets) && line != "\r\n"
       key, value = line.split(":", 2)
       headers[key.strip.downcase] = value.to_s.strip if key

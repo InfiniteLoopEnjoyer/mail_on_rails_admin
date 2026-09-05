@@ -22,11 +22,19 @@ class SpamFlagTest < ApplicationSystemTestCase
     click_on "Mark as spam"
 
     # The redirect lands back on the folder the message left, now empty.
-    assert_text "Moved to Junk."
+    assert_text "Moved to Junk. Future mail from sender@remote.test will be filed there."
     assert_selector "h1", text: "INBOX"
     assert_text "This folder is empty."
     assert_equal 1, @junk.email_messages.count
     assert_equal 0, @account.inbox.email_messages.count
+    assert_equal "deny", @account.sender_rules.sole.verdict
+
+    # The verdict shows in the account page's Senders section.
+    visit email_account_url(@account)
+    within("section", text: "Senders") do
+      assert_text "sender@remote.test"
+      assert_text "deny"
+    end
   end
 
   test "Not spam moves a junked message back to INBOX" do
@@ -35,10 +43,11 @@ class SpamFlagTest < ApplicationSystemTestCase
 
     click_on "Not spam"
 
-    assert_text "Moved to INBOX."
+    assert_text "Moved to INBOX. Future mail from sender@remote.test will be delivered there."
     assert_selector "h1", text: "Junk"
     assert_text "This folder is empty."
     assert_equal 1, @account.inbox.email_messages.count
     assert_equal 0, @junk.email_messages.count
+    assert_equal "allow", @account.sender_rules.sole.verdict
   end
 end

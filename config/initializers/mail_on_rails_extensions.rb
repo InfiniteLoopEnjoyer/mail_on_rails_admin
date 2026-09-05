@@ -37,6 +37,13 @@ ActiveSupport.on_load(:mail_on_rails_email_alias) do
   after_commit -> { email_account.broadcast_refresh_later unless email_account.destroyed? }
 end
 
+# Same for the account page's sender rules - written from the page's own
+# form and, out of band, by IMAP Junk moves, which should show up live.
+# (Account deletion delete_all's them: no callbacks, nothing to render.)
+ActiveSupport.on_load(:mail_on_rails_sender_rule) do
+  after_commit -> { email_account.broadcast_refresh_later unless email_account.destroyed? }
+end
+
 # Live-refresh the domain page and index pills when check RESULTS change
 # (subscribed via turbo_stream_from). Only on result changes: every show
 # render runs a write-through DnsCheck.refresh! (touching dns_checked_at),

@@ -138,6 +138,58 @@ class RspamdAnalyzerTest < ActiveSupport::TestCase
     end
   end
 
+  # -- Bayes learning (the controller worker) ---------------------------------
+
+  def with_controller_at(addr, password: nil)
+    ENV["SMTP_RSPAMD_CONTROLLER_ADDR"] = addr
+    ENV["SMTP_RSPAMD_PASSWORD"] = password if password
+    yield
+  ensure
+    ENV.delete("SMTP_RSPAMD_CONTROLLER_ADDR")
+    ENV.delete("SMTP_RSPAMD_PASSWORD")
+  end
+
+  test "learning is off until the controller address is set" do
+    assert_not MailOnRails::RspamdAnalyzer.learning_enabled?
+    with_controller_at("127.0.0.1:11334") { assert MailOnRails::RspamdAnalyzer.learning_enabled? }
+  end
+
+  test "learn posts to the class's endpoint with the controller password" do
+    FakeRspamd.serving({ "success" => true }) do |addr, captured|
+      with_controller_at(addr, password: "hunter2") do
+        assert_equal :ok, MailOnRails::RspamdAnalyzer.learn(RAW, "spam")
+        assert_equal "/learnspam", captured["__path"]
+        assert_equal "hunter2", captured["password"]
+
+        assert_equal :ok, MailOnRails::RspamdAnalyzer.learn(RAW, "ham")
+        assert_equal "/learnham", captured["__path"]
+      end
+    end
+  end
+
+  test "learn reads rspamd's already-learned 404 as a repeat, other 4xx as refusals" do
+    FakeRspamd.serving({ "error" => "<abc> has been already learned as spam, ignore it" }, status: 404) do |addr, _|
+      with_controller_at(addr) { assert_equal :already_learned, MailOnRails::RspamdAnalyzer.learn(RAW, "spam") }
+    end
+    FakeRspamd.serving({ "error" => "Unauthorized" }, status: 403) do |addr, _|
+      with_controller_at(addr) { assert_equal :rejected, MailOnRails::RspamdAnalyzer.learn(RAW, "spam") }
+    end
+    FakeRspamd.serving({ "error" => "not found" }, status: 404) do |addr, _|
+      with_controller_at(addr) { assert_equal :rejected, MailOnRails::RspamdAnalyzer.learn(RAW, "spam") }
+    end
+  end
+
+  test "learn is unavailable on a 5xx or a dead controller" do
+    FakeRspamd.serving({ "error" => "boom" }, status: 500) do |addr, _|
+      with_controller_at(addr) { assert_equal :unavailable, MailOnRails::RspamdAnalyzer.learn(RAW, "spam") }
+    end
+
+    closed = TCPServer.new("127.0.0.1", 0)
+    addr = "127.0.0.1:#{closed.addr[1]}"
+    closed.close
+    with_controller_at(addr) { assert_equal :unavailable, MailOnRails::RspamdAnalyzer.learn(RAW, "spam") }
+  end
+
   test "a refused connection is unavailable" do
     closed = TCPServer.new("127.0.0.1", 0)
     port = closed.addr[1]

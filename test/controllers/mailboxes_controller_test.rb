@@ -98,6 +98,21 @@ class MailboxesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "clean", @inbox.email_messages.sole.scan_status
   end
 
+  test "import into Junk is a spam verdict on the sender, import elsewhere is not" do
+    raw = "From: spammer@remote.test\r\nSubject: buy\r\n\r\nnow\r\n"
+
+    assert_no_enqueued_jobs only: MailOnRails::LearnSpamJob do
+      import_eml eml_upload(raw)
+    end
+    assert_empty @account.sender_rules
+
+    assert_enqueued_with(job: MailOnRails::LearnSpamJob) do
+      import_eml eml_upload(raw), mailbox: @account.junk_mailbox
+    end
+    rule = @account.sender_rules.sole
+    assert_equal [ "spammer@remote.test", "deny", "import" ], [ rule.address, rule.verdict, rule.source ]
+  end
+
   test "import refuses uploads while the scanner is down, mirroring fail-closed APPEND" do
     MailOnRails::Settings.overrides = { imap_append_fail_closed: true }
     down = MailOnRails::ClamavScanner::Result.new(:unavailable, nil)

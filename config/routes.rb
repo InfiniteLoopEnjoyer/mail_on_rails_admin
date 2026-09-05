@@ -151,6 +151,9 @@ Rails.application.routes.draw do
     # SearchesController.
     resource :search, only: :show
     resources :email_aliases, only: %i[create destroy], path: "aliases"
+    # Per-account sender allow/deny rules, listed and edited on the account
+    # page - see SenderRulesController.
+    resources :sender_rules, only: %i[create destroy], path: "senders"
     resources :mailboxes, except: %i[index] do
       # The whole folder as a standard mbox file (streamed - see
       # MboxExport), importable by any other mail client; and the reverse:
