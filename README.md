@@ -54,8 +54,9 @@ control, the Prometheus endpoint, and the production deploy config.
 - **Settings** — the gem's dynamic settings (limits, rates, timeouts,
   toggles, scanner addresses, retention) edited live from the UI;
   running listeners converge without a restart.
-- **Security operations** — banned IPs/CIDRs enforced at every edge; a
-  honeypot intelligence dashboard (canary logins and exploit probes,
+- **Security operations** — banned IPs/CIDRs enforced at every edge
+  (manual, or automatic for failed SMTP/IMAP logins with the
+  `auth_auto_ban` setting, off by default); a honeypot intelligence dashboard (canary logins and exploit probes,
   with DNS/ASN enrichment, auto-throttle, and manual ban/kick
   escalation); live IMAP and SMTP connection pages with kick; auth
   attempt, tarpit, and lockout visibility; an audit log of admin

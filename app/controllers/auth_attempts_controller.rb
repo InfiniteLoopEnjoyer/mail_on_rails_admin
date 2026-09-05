@@ -46,7 +46,10 @@ class AuthAttemptsController < ApplicationController
 
   def load_bans
     @bans = MailOnRails::BannedIp.order(created_at: :desc).to_a
-    @manual_bans = @bans.select { |ban| ban.source == "manual" }
+    # Listed and removable: manual bans and the automatic ones auth_auto_ban
+    # writes for failed logins. DROP imports are only counted (the next
+    # refresh would restore a removed one).
+    @manual_bans = @bans.select { |ban| ban.source != "spamhaus_drop" }
     @drop_bans = @bans.count { |ban| ban.source == "spamhaus_drop" }
     @drop_refreshed_at = @bans.filter_map { |ban| ban.updated_at if ban.source == "spamhaus_drop" }.max
   end

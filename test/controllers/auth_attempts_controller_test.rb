@@ -124,6 +124,16 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
     assert_match "banned", response.body
   end
 
+  test "automatic bans from failed logins are listed, marked, and removable" do
+    MailOnRails::BannedIp.create!(cidr: "203.0.113.9", source: "auth_failure", note: "auto: failed imap login as x")
+
+    get auth_attempts_path
+    assert_match "203.0.113.9", response.body
+    assert_match "auto: failed imap login as x", response.body
+    assert_select "span[title='Banned automatically by the auth_auto_ban setting']", text: "auto"
+    assert_select "form[action=?]", banned_ip_path(MailOnRails::BannedIp.sole, window: "7d")
+  end
+
   test "the index manages manual bans and summarizes DROP imports" do
     MailOnRails::BannedIp.create!(cidr: "203.0.113.0/24", note: "spray campaign")
     MailOnRails::BannedIp.create!(cidr: "198.51.100.0/24", source: "spamhaus_drop")

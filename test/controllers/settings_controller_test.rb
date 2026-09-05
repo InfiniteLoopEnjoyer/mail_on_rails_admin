@@ -21,6 +21,9 @@ class SettingsControllerTest < ActionDispatch::IntegrationTest
     assert_select "input[name='settings[trash_retention_days]'][placeholder='30']"
     # A boolean knob renders the three-way select.
     assert_select "select[name='settings[smtp_sender_auth]'] option[value='']", text: "Default (on)"
+    # The auto-ban switch ships off and is flipped from this page.
+    assert_select "select[name='settings[auth_auto_ban]'] option[value='']", text: "Default (off)"
+    assert_select "input[name='settings[auth_auto_ban_failures]'][placeholder='1']"
     # Boot-only settings are never rendered.
     assert_select "input[name='settings[smtp_port]']", count: 0
     assert_select "input[name='settings[smtp_rspamd_password]']", count: 0

@@ -4,7 +4,8 @@
 / to), origin (optional: "smtp"/"imap" when the button sits on a live
 / connections page, so the ban redirects back there).
 - if (ban = ban_covering(target))
-  span.inline-block.rounded.bg-red-50.px-1.5.py-0.5.text-xs.font-medium.text-red-700.dark:bg-red-950.dark:text-red-400 title="Covered by #{ban.cidr}#{" (Spamhaus DROP)" if ban.source == "spamhaus_drop"}"
+  - origin_label = { "spamhaus_drop" => " (Spamhaus DROP)", "auth_failure" => " (auto: failed login)" }[ban.source]
+  span.inline-block.rounded.bg-red-50.px-1.5.py-0.5.text-xs.font-medium.text-red-700.dark:bg-red-950.dark:text-red-400 title="Covered by #{ban.cidr}#{origin_label}"
     | banned
 - else
   = button_to "Ban", banned_ips_path,
