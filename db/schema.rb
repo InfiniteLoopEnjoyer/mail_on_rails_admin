@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_01_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_05_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -417,6 +417,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_01_100000) do
     t.index ["window_start"], name: "index_send_quota_slots_on_window_start"
   end
 
+  create_table "mail_on_rails_sender_rules", force: :cascade do |t|
+    t.string "address", null: false
+    t.datetime "created_at", null: false
+    t.bigint "email_account_id", null: false
+    t.string "source", null: false
+    t.datetime "updated_at", null: false
+    t.string "verdict", null: false
+    t.index ["email_account_id", "address"], name: "index_sender_rules_on_account_and_address", unique: true
+  end
+
   create_table "mail_on_rails_session_transcripts", force: :cascade do |t|
     t.string "close_reason"
     t.datetime "closed_at", null: false
@@ -570,6 +580,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_01_100000) do
   add_foreign_key "mail_on_rails_email_messages", "mail_on_rails_mailboxes", column: "mailbox_id"
   add_foreign_key "mail_on_rails_expunged_messages", "mail_on_rails_mailboxes", column: "mailbox_id"
   add_foreign_key "mail_on_rails_mailboxes", "mail_on_rails_email_accounts", column: "email_account_id"
+  add_foreign_key "mail_on_rails_sender_rules", "mail_on_rails_email_accounts", column: "email_account_id"
   add_foreign_key "mail_on_rails_tls_rpt_reports", "mail_on_rails_domains", column: "domain_id"
   add_foreign_key "mail_on_rails_vacation_replies", "mail_on_rails_email_accounts", column: "email_account_id"
   add_foreign_key "sessions", "users"
