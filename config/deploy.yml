@@ -176,6 +176,10 @@ env:
     # machine, not the droplet, so losing it makes existing backups
     # unrecoverable. bin/db-backup-decrypt recovers them for pg_restore.
     - DB_BACKUP_ENCRYPTION_KEY
+    # rspamd controller password, for Bayes learning from Junk moves
+    # (LearnSpamJob -> /learnspam,/learnham on SMTP_RSPAMD_CONTROLLER_ADDR).
+    # The same secret is handed to the rspamd accessory as RSPAMD_PASSWORD.
+    - SMTP_RSPAMD_PASSWORD
   clear:
     # Database (postgres accessory below, reached over its Unix socket).
     # The rest of the connection config lives in config/database.yml.
@@ -253,6 +257,15 @@ env:
     # compromised account pumping spam; fails open when rspamd is
     # down). Unset to disable both.
     SMTP_RSPAMD_ADDR: mail_on_rails-rspamd:11333
+
+    # rspamd's controller worker (a different listener from the scan
+    # worker above), where the Bayes learn endpoints live. A message a
+    # user files into Junk - from any IMAP client or the web UI - is
+    # learned as spam, one moved back out as ham (rspamd unlearns the
+    # earlier verdict), via LearnSpamJob on the web role. Password-gated:
+    # SMTP_RSPAMD_PASSWORD above. Unset to keep the sender rules but skip
+    # Bayes training.
+    SMTP_RSPAMD_CONTROLLER_ADDR: mail_on_rails-rspamd:11334
 
     # Per-account outbound quota: recipients accepted from an
     # authenticated sender per sliding window (seconds), answered with
@@ -355,12 +368,23 @@ accessories:
   # shared "kamal" docker network by container name (mail_on_rails-rspamd) -
   # no host port is published. rspamd needs outbound DNS to do the SPF/DKIM/
   # DMARC lookups the app never could (it never saw the live connection).
-  # SPF/DKIM/DMARC run out of the box with no config; Redis is only needed
-  # for the stateful modules (greylisting, ratelimit, fuzzy). Pin the tag to
-  # a current release. The volume persists learned data across restarts.
+  # SPF/DKIM/DMARC run out of the box with no config; Redis is still not
+  # needed - the Bayes classifier (trained by the users' Junk moves through
+  # the controller worker on 11334, see SMTP_RSPAMD_CONTROLLER_ADDR) runs
+  # on its SQLite backend inside the rspamd-data volume, which persists the
+  # statistics across restarts. The two mounted files are the classifier
+  # config and the controller password (the image ships a well-known
+  # default; RSPAMD_PASSWORD replaces it - same secret as the app's
+  # SMTP_RSPAMD_PASSWORD). Pin the tag to a current release.
   rspamd:
     image: rspamd/rspamd:3.9
     host: 192.168.0.1
+    env:
+      secret:
+        - RSPAMD_PASSWORD
+    files:
+      - config/rspamd/classifier-bayes.conf:/etc/rspamd/local.d/classifier-bayes.conf
+      - config/rspamd/worker-controller.inc:/etc/rspamd/local.d/worker-controller.inc
     directories:
       - rspamd-data:/var/lib/rspamd
 

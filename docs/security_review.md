@@ -36,7 +36,7 @@ block there). Highlights:
 | L5 | Filter params gaps | Added `:code`, `:credential`, `:authorization`. |
 | L6 | No absolute session cap | `MAIL_ON_RAILS_SESSION_MAX_LIFETIME` (default 30d) bounds a sliding session. |
 | L2 | Metrics allowlist optional | Production boot warns when `METRICS_TOKEN` is set without `METRICS_ALLOW_IPS`. |
-| L7 | rspamd password over cleartext HTTP | Settings::Check warns. |
+| L7 | rspamd password over cleartext HTTP | Settings::Check warns (for the scan worker and the controller address alike). The controller no longer runs the image's well-known default password: `RSPAMD_PASSWORD` sets it (`config/rspamd/worker-controller.inc`). |
 | L8 | Bind defaults `0.0.0.0` | Kept (containers need it); Settings::Check warns in production. |
 | L1 | CSP `style-src 'unsafe-inline'` | **Deferred, accepted.** Fully removing it means serving the sanitized mail body from a separate origin/endpoint with its own CSP — an architecture change against a low residual (the body already renders in a script-less, same-origin-less sandboxed iframe atop Loofah/CSS sanitization). Tracked for a future pass. |
 

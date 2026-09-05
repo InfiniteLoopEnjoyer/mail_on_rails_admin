@@ -131,7 +131,10 @@ scanning policy live in [docs/virus_scanning.md](docs/virus_scanning.md).
 
 The deploy is three Kamal roles from one image - web, smtp, imap - plus
 PostgreSQL, rspamd, ClamAV and certbot accessories (one all-in-one role
-is still supported; see [docs/split.md](docs/split.md)).
+is still supported; see [docs/split.md](docs/split.md)). rspamd carries
+its Bayes statistics on its own volume (SQLite backend, no Redis) and
+takes its controller password from the `RSPAMD_PASSWORD` secret
+(`config/rspamd/`).
 **Solid Queue is required and runs on the web role**
 (`SOLID_QUEUE_IN_PUMA`, schedule in [config/recurring.yml](config/recurring.yml)):
 the smtp and imap roles only accept and serve; Action Mailbox routing of
@@ -182,6 +185,13 @@ Alert on it: authenticated submission **fails open** when rspamd is down
 `rspamd_up == 0` combined with climbing outbound volume is the signature
 of a compromised account spamming unchecked.
 
+Bayes training runs against rspamd's controller worker
+(`SMTP_RSPAMD_CONTROLLER_ADDR`, password `SMTP_RSPAMD_PASSWORD`, shared
+with the accessory as `RSPAMD_PASSWORD`). A stream of retrying
+`MailOnRails::LearnSpamJob` runs in Solid Queue means the controller is
+unreachable; "rspamd refused to learn" warnings in the web log mean the
+password or address is wrong.
+
 ## Multi-user deployments
 
 Web users have one of two roles. **Admins** see and manage everything —
@@ -212,9 +222,15 @@ Web UI, roughly by value:
   grants, and every destructive/server-wide action (domain delete, user
   delete, DNS publish, settings) is admin-only. See "Multi-user
   deployments" above. Possible follow-ups: a read-only tier.
-- [ ] **Per-account server-side filing rules** — inbound filtering is
-  global only (rspamd, DMARC); no per-user "file sender X into folder Y"
-  (Sieve or a simpler home-grown rule table acted on in the mailroom).
+- [x] **Per-account sender rules** — each account has an allow/deny list
+  keyed by From address or `@domain` (the Senders section of the account
+  page). Filing a message into Junk from any IMAP client or the web UI
+  writes a deny rule for its sender and trains rspamd's Bayes classifier
+  as spam; moving it back out flips the rule to allow and relearns it as
+  ham (rspamd unlearns the earlier verdict), so a mistaken filing is
+  undone by undoing the move. The mailroom applies deny before rspamd's
+  score and allow past it, but an allow never overrides a DMARC failure.
+  Still open: arbitrary "file sender X into folder Y" rules (Sieve).
 - [ ] **Attachments on draft autosave** — composer file attachments travel
   with the send only; drafts persist the body (including rich HTML) but
   not the attached files, so a draft opened on another device loses them.
