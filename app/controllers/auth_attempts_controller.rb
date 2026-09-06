@@ -18,6 +18,11 @@ class AuthAttemptsController < ApplicationController
     @usernames = MailOnRails::AuthAttempt.top_usernames(since: @since)
     @recent_real = MailOnRails::AuthAttempt.against_real_accounts.recent(@since)
                               .order(occurred_at: :desc).limit(25)
+    # The password column appears while the setting is on (so a fresh
+    # switch-on is visible before the first row lands) and for as long as
+    # kept passwords remain listed after it is switched off.
+    @show_passwords = MailOnRails::Settings[:auth_log_passwords] ||
+                      @recent_real.any? { |attempt| attempt.password.present? }
     # AuthThrottle blocks currently in force (they expire on their own; the
     # window tabs above don't apply - "currently" is the only window).
     @blocks = MailOnRails::AuthThrottle.active_blocks.to_a

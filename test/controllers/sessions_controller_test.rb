@@ -33,6 +33,19 @@ class SessionsControllerTest < ActionDispatch::IntegrationTest
     assert attempt.account_exists, "this login does exist"
   end
 
+  test "a failed sign-in does not keep the password by default" do
+    post session_path, params: { email_address: @user.email_address, password: "wrong" }
+
+    assert_nil MailOnRails::AuthAttempt.sole.password
+  end
+
+  test "a failed sign-in keeps the password tried when auth_log_passwords is on" do
+    MailOnRails::Setting.write(:auth_log_passwords, "1")
+    post session_path, params: { email_address: @user.email_address, password: "wrong" }
+
+    assert_equal "wrong", MailOnRails::AuthAttempt.sole.password
+  end
+
   test "a successful sign-in is not recorded" do
     post session_path, params: { email_address: @user.email_address, password: "password" }
     assert_equal 0, MailOnRails::AuthAttempt.count

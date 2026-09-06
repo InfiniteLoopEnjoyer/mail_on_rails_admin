@@ -17,8 +17,9 @@ class AuthAttemptTest < ActiveSupport::TestCase
              : ENV.delete("MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP")
   end
 
-  def record(username: "cyrus", ip: IP, source: "smtp", outcome: "unknown_account", now: Time.current)
-    MailOnRails::AuthAttempt.record(ip: ip, username: username, source: source, outcome: outcome, now: now)
+  def record(username: "cyrus", ip: IP, source: "smtp", outcome: "unknown_account", now: Time.current, password: nil)
+    MailOnRails::AuthAttempt.record(ip: ip, username: username, source: source, outcome: outcome, now: now,
+                                    password: password)
   end
 
   # -- what gets written -----------------------------------------------------
@@ -63,11 +64,29 @@ class AuthAttemptTest < ActiveSupport::TestCase
     assert_equal "cyrus", MailOnRails::AuthAttempt.sole.username
   end
 
-  # No password field exists, and none should ever be added - see the class
-  # comment. This is the test that fails loudly if someone tries.
-  test "no column holds password material" do
+  # The one password column is opt-in (auth_log_passwords, default off) and
+  # encrypted - see the class comment. This is the test that fails loudly
+  # if a second one appears, or if the default ever starts keeping them.
+  test "the password column is the only credential material, and empty by default" do
     suspicious = MailOnRails::AuthAttempt.column_names.grep(/pass|secret|credential|token|digest/i)
-    assert_empty suspicious, "AuthAttempt must never store password material"
+    assert_equal [ "password" ], suspicious, "AuthAttempt must not grow other password material"
+    assert_includes MailOnRails::AuthAttempt.encrypted_attributes, :password
+
+    record(username: REAL, outcome: "bad_credentials", password: "hunter2")
+    assert_nil MailOnRails::AuthAttempt.sole.password, "nothing kept unless the operator opts in"
+  end
+
+  test "with auth_log_passwords on, a bad password for a real address is kept encrypted" do
+    MailOnRails::Setting.write(:auth_log_passwords, "1")
+    record(username: REAL, outcome: "bad_credentials", password: "hunter2")
+    record(username: "nobody@example.com", outcome: "bad_credentials", password: "hunter2")
+
+    assert_equal "hunter2", MailOnRails::AuthAttempt.find_by(username: REAL).password
+    assert_nil MailOnRails::AuthAttempt.find_by(username: "nobody@example.com").password, "unknown addresses never keep one"
+    raw = MailOnRails::AuthAttempt.connection.select_value(
+      MailOnRails::AuthAttempt.where(username: REAL).select(:password).to_sql
+    )
+    assert_no_match(/hunter2/, raw.to_s, "plaintext must not reach the column")
   end
 
   # -- the write cap ---------------------------------------------------------

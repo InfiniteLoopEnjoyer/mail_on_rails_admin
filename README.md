@@ -59,8 +59,9 @@ control, the Prometheus endpoint, and the production deploy config.
   `auth_auto_ban` setting, off by default); a honeypot intelligence dashboard (canary logins and exploit probes,
   with DNS/ASN enrichment, auto-throttle, and manual ban/kick
   escalation); live IMAP and SMTP connection pages with kick; auth
-  attempt, tarpit, and lockout visibility; an audit log of admin
-  actions.
+  attempt, tarpit, and lockout visibility (optionally with the password
+  each failed login tried, `auth_log_passwords`, off by default); an
+  audit log of admin actions.
 - **Monitoring** — a bearer-token-gated Prometheus `/metrics` endpoint
   (see [Securing /metrics](#securing-metrics)).
 

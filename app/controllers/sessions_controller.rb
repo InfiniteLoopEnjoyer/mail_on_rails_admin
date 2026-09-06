@@ -37,9 +37,10 @@ class SessionsController < ApplicationController
     else
       MailOnRails::AuthThrottle.record_failure(ip: request.remote_ip, email: params[:email_address])
       # Recorded so the web login shows up alongside IMAP and SMTP AUTH in
-      # the attempt log.
+      # the attempt log. The rejected password rides along; AuthAttempt
+      # keeps it only while the auth_log_passwords setting is on.
       MailOnRails::AuthAttempt.record(ip: request.remote_ip, username: params[:email_address],
-                         source: "web", outcome: "bad_credentials")
+                         source: "web", outcome: "bad_credentials", password: params[:password])
       redirect_to new_session_path, alert: "Try another email address or password."
     end
   end

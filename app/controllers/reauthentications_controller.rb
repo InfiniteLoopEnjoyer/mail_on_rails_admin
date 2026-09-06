@@ -25,7 +25,7 @@ class ReauthenticationsController < ApplicationController
       confirmed
       redirect_to reauthentication_return_to, notice: "Identity confirmed."
     else
-      record_failure
+      record_failure(password: params[:password])
       redirect_to new_reauthentication_path, alert: "That password didn't match."
     end
   end
@@ -82,9 +82,11 @@ class ReauthenticationsController < ApplicationController
       end
     end
 
-    def record_failure
+    # +password+ only from the password path (nil for a bad TOTP code or
+    # passkey); AuthAttempt keeps it only while auth_log_passwords is on.
+    def record_failure(password: nil)
       MailOnRails::AuthThrottle.record_failure(ip: request.remote_ip, email: Current.user.email_address)
       MailOnRails::AuthAttempt.record(ip: request.remote_ip, username: Current.user.email_address,
-                                      source: "web", outcome: "bad_credentials")
+                                      source: "web", outcome: "bad_credentials", password: password)
     end
 end

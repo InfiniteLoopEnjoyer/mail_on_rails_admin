@@ -67,6 +67,37 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
     assert_match "carol@example.com", response.body
   end
 
+  # The password column exists only for the operator who switched it on:
+  # off (the default) there is no column and nothing to show in it.
+  test "hides the password column by default" do
+    log(username: "carol@example.com", outcome: "bad_credentials")
+
+    get auth_attempts_path
+    assert_response :success
+    assert_select "th", text: "Password tried", count: 0
+  end
+
+  test "shows the password tried when auth_log_passwords is on" do
+    MailOnRails::Setting.write(:auth_log_passwords, "1")
+    MailOnRails::AuthAttempt.record(ip: "92.118.39.228", username: "carol@example.com", source: "imap",
+                                    outcome: "bad_credentials", password: "Summer2019!")
+
+    get auth_attempts_path
+    assert_response :success
+    assert_select "th", text: "Password tried"
+    assert_select "td", text: "Summer2019!"
+  end
+
+  test "keeps showing passwords already kept after the setting is switched off" do
+    MailOnRails::Setting.write(:auth_log_passwords, "1")
+    MailOnRails::AuthAttempt.record(ip: "92.118.39.228", username: "carol@example.com", source: "imap",
+                                    outcome: "bad_credentials", password: "Summer2019!")
+    MailOnRails::Setting.clear(:auth_log_passwords)
+
+    get auth_attempts_path
+    assert_select "td", text: "Summer2019!"
+  end
+
   test "omits the real-address callout when there is nothing to report" do
     log(username: "cyrus")
 

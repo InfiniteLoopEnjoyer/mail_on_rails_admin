@@ -9,8 +9,9 @@ header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
 
 p.mb-4.text-sm.text-slate-500.dark:text-slate-400
   ' Failed credential checks from all three auth surfaces. Passwords are
-  ' never recorded - most failures are real people mistyping, so the column
-  ' would fill with working credentials for these very mailboxes.
+  ' not recorded unless the auth_log_passwords setting is on - most failures
+  ' are real people mistyping, so the column fills with working credentials
+  ' for these very mailboxes.
 
 section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
   - [["Attempts", @totals[:attempts]], ["Source addresses", @totals[:sources]], ["Addresses tried", @totals[:usernames]], ["Against real accounts", @totals[:real_accounts]]].each do |label, value|
@@ -97,6 +98,12 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
   section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
     header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
       h2.font-semibold Most recent attempts on real addresses
+      - if @show_passwords
+        p.text-sm.text-slate-500.dark:text-slate-400
+          ' The password tried, kept by the auth_log_passwords setting so it
+          ' can be checked against old or breached passwords. Blank when the
+          ' login was SCRAM (the server only ever sees a proof), throttled
+          ' before the check, or made while the setting was off.
     .overflow-x-auto
       table.w-full.text-sm
         thead.text-left.text-xs.text-slate-500.dark:text-slate-400
@@ -106,6 +113,8 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
             th.px-4.py-2 From
             th.px-4.py-2 Surface
             th.px-4.py-2 Outcome
+            - if @show_passwords
+              th.px-4.py-2 Password tried
             th.px-4.py-2
         tbody
           - @recent_real.each do |attempt|
@@ -115,6 +124,8 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
               td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= attempt.ip
               td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.source
               td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.outcome.tr("_", " ")
+              - if @show_passwords
+                td.px-4.py-1.5.font-mono.break-all.text-red-700.dark:text-red-400= attempt.password
               td.px-4.py-1.5.text-right
                 - if attempt.ip.present?
                   = render "ban_button", target: attempt.ip, confirm: "Ban #{attempt.ip}? It loses SMTP, IMAP and web login access."
