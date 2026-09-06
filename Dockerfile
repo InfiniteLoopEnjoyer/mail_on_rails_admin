@@ -67,13 +67,17 @@ FROM base
 # in-process in the mail_on_rails gem, against its embedded IANA root
 # trust anchor - any recursive upstream works, untrusted.)
 
-# The bundle carries a fixed json (2.21.2); remove the base image's stale
-# default gem (json 2.18.0, CVE-2026-33210) - spec AND stdlib copies, since
-# plain `require "json"` outside bundler loads the stdlib file straight off
-# $LOAD_PATH and would silently get 2.18.0.
-RUN rm /usr/local/lib/ruby/gems/*/specifications/default/json-*.gemspec && \
+# The bundle carries fixed json (2.21.2) and resolv (0.7.2) gems; remove
+# the base image's stale default copies (json 2.18.0, CVE-2026-33210;
+# resolv 0.7.0, CVE-2026-80212) - spec AND stdlib files, since a plain
+# `require` outside bundler loads the stdlib file straight off $LOAD_PATH
+# and would silently get the old version. (resolv-[0-9]* so the separate
+# resolv-replace default gem is left alone.)
+RUN rm /usr/local/lib/ruby/gems/*/specifications/default/json-*.gemspec \
+       /usr/local/lib/ruby/gems/*/specifications/default/resolv-[0-9]*.gemspec && \
     rm -rf /usr/local/lib/ruby/[0-9]*/json.rb /usr/local/lib/ruby/[0-9]*/json \
-           /usr/local/lib/ruby/[0-9]*/*-linux*/json
+           /usr/local/lib/ruby/[0-9]*/*-linux*/json \
+           /usr/local/lib/ruby/[0-9]*/resolv.rb
 
 # Run and own only the runtime files as a non-root user for security.
 RUN groupadd --system --gid 1000 rails && \

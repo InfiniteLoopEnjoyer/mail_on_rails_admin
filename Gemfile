@@ -66,6 +66,12 @@ gem "nokogiri"
 # DNS records for hosted domains [https://github.com/socketry/cloudflare]
 gem "cloudflare"
 
+# Stdlib resolver, pinned past CVE-2026-80212 (uncontrolled memory growth
+# from crafted DNS answers; the ruby image's default gem is 0.7.0). The
+# Dockerfile removes the image's stale copy so the bundled one is the
+# only resolv in the container.
+gem "resolv", ">= 0.7.2"
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"

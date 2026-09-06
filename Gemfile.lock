@@ -1,6 +1,6 @@
 GIT
   remote: https://github.com/InfiniteLoopEnjoyer/mail_on_rails.git
-  revision: 60184b961aae5eadc857dc9a9e37bce496d05921
+  revision: ba26d1570917a0c7c313d053acab4922ff1ca1d0
   branch: main
   specs:
     mail_on_rails (0.1.0)
@@ -373,6 +373,7 @@ GEM
       io-console (~> 0.5)
     requestjs-rails (0.0.14)
       railties (>= 7.1.0)
+    resolv (0.7.2)
     rexml (3.4.4)
     rotp (6.3.0)
     rqrcode (3.2.0)
@@ -541,6 +542,7 @@ DEPENDENCIES
   rails
   rainbow
   requestjs-rails
+  resolv (>= 0.7.2)
   rotp
   rqrcode
   rubocop-rails-omakase
@@ -698,6 +700,7 @@ CHECKSUMS
   regexp_parser (2.12.0) sha256=35a916a1d63190ab5c9009457136ae5f3c0c7512d60291d0d1378ba18ce08ebb
   reline (0.7.0) sha256=5b012d8e55dbf9d450f12bde2cf7d15ff546ae80b3f8f3b30e570d431815583d
   requestjs-rails (0.0.14) sha256=bb494198993b9bf136adeeffa3594c0143c7d16c7de4485c5e20d9c126e69a2d
+  resolv (0.7.2) sha256=626d044d975ab2daac759bf898416f1b51e2cb8dcd6727c2b5b5b28b97ead2e1
   rexml (3.4.4) sha256=19e0a2c3425dfbf2d4fc1189747bdb2f849b6c5e74180401b15734bc97b5d142
   rotp (6.3.0) sha256=75d40087e65ed0d8022c33055a6306c1c400d1c12261932533b5d6cbcd868854
   rqrcode (3.2.0) sha256=64c1494ca6bb67d731330f38b50e3fd09eeab4f5dcd04b608e21218d1d0b9542
