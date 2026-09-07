@@ -31,13 +31,18 @@ class LiveConnectionsController < ApplicationController
     # History and the repeat-offender totals are DB-backed too.
     @history = MailOnRails::ClosedConnection.recent_list(protocol, since: @since)
     @top_sources = MailOnRails::ClosedConnection.top_sources(protocol, since: @since)
+    # The sessions that ended abnormally and were captured (smtp/imap
+    # _trace_capture): listed on their own so the ones worth reading are
+    # not hunted for among the history rows.
+    @transcripts = MailOnRails::SessionTranscript.recent_list(protocol, since: @since).to_a
+    @capture_on = MailOnRails::Settings[:"#{protocol}_trace_capture"]
     @bans = MailOnRails::BannedIp.order(created_at: :desc).to_a
     # Attribution (rDNS/ASN/country, the honeypot pages' CymruLookup blob)
     # for every address the page shows, from the IpEnrichment cache.
     # Unknown addresses get a background lookup and fill in on a later
     # refresh; order sets who wins the per-call lookup budget.
     ips = @connections.map(&:peer_ip) + @lockouts.keys +
-          @top_sources.map { |source| source[:ip] } + @history.map(&:ip)
+          @top_sources.map { |source| source[:ip] } + @transcripts.map(&:ip) + @history.map(&:ip)
     @enrichments = MailOnRails::IpEnrichment.ensure_all(ips)
   end
 

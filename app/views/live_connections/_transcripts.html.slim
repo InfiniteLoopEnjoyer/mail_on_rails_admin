@@ -1,0 +1,50 @@
+/ Captured sessions: the connections in the window that ended abnormally
+/ while trace capture was on, so they have a stored transcript
+/ (SessionTranscript). The history table below links to these too, but
+/ only one row in dozens carries one; this table is just the ones worth
+/ reading, with the peer's opening commands inline so a run of probes
+/ can be triaged without opening each capture.
+- setting = "#{controller_name}_trace_capture"
+section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+  header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+    h2.font-semibold Captured sessions
+    p.text-sm.text-slate-500.dark:text-slate-400
+      ' Connections in the selected window whose dialogue was captured
+      ' because they ended abnormally - timeouts, drops, protocol errors,
+      ' failed logins - while the #{setting} setting was on. Newest first,
+      ' kept #{MailOnRails::SessionTranscript.retention_days} days.
+      - unless @capture_on
+        span.ml-1.font-medium.text-amber-700.dark:text-amber-400
+          = "#{setting} is off, so nothing new is being captured."
+  - if @transcripts.any?
+    table.w-full.text-sm
+      thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+        tr
+          th.px-4.py-2 Closed
+          th.px-4.py-2 Address
+          th.px-4.py-2 Listener
+          th.px-4.py-2 User
+          th.px-4.py-2 Reason
+          th.px-4.py-2.text-right Lines
+          th.px-4.py-2 Peer sent
+          th.px-4.py-2
+      tbody
+        - @transcripts.each do |capture|
+          tr.border-t.border-slate-100.dark:border-slate-800
+            td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300
+              = link_to capture.closed_at.strftime("%b %-d %H:%M"), session_transcript_path(capture), class: "hover:text-accent hover:underline"
+            td.px-4.py-1.5.font-mono.break-all
+              = capture.ip || "?"
+              = render "ip_meta", ip: capture.ip
+            td.px-4.py-1.5.text-slate-600.dark:text-slate-300= capture.port || "-"
+            td.px-4.py-1.5.font-mono.break-all= capture.username || "-"
+            td.px-4.py-1.5.text-slate-600.dark:text-slate-300= capture.close_reason&.tr("_", " ") || "-"
+            td.px-4.py-1.5.text-right.tabular-nums.text-slate-600.dark:text-slate-300= capture.line_count
+            td.px-4.py-1.5.font-mono.text-xs.break-all.text-slate-600.dark:text-slate-300 title="First commands the peer sent; open the transcript for the full exchange."
+              = capture.preview.presence || "-"
+            td.px-4.py-1.5.whitespace-nowrap.text-right
+              = link_to "Transcript", session_transcript_path(capture), class: "mr-2 text-xs font-medium text-accent hover:underline"
+              - if capture.ip
+                = render "auth_attempts/ban_button", target: capture.ip, origin: controller_name, confirm: "Ban #{capture.ip}? Its live connections are dropped and it loses SMTP, IMAP and web login access."
+  - else
+    p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 Nothing captured in this window.

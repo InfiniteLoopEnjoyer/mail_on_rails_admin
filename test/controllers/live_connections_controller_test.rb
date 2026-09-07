@@ -193,6 +193,45 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
     assert_match "198.51.100.9", response.body
   end
 
+  # Captured sessions get their own table: the point is to read several
+  # in a row, so they must not be hunted for among the history rows.
+  test "captured sessions list the protocol's transcripts in the window with a preview" do
+    MailOnRails::Setting.write(:smtp_trace_capture, "1")
+    smtp = MailOnRails::SessionTranscript.create!(
+      protocol: "smtp", ip: "203.0.113.9", port: 25, close_reason: "protocol_errors",
+      connected_at: 3.minutes.ago, closed_at: 2.minutes.ago,
+      transcript: "=> 220 mx ready\n<= EHLO scanner.test\n=> 250 OK\n<= AUTH LOGIN\n=> 503 no\n<= GET / HTTP/1.1\n=> 500 bad\n<= QUIT"
+    )
+    MailOnRails::SessionTranscript.create!(protocol: "imap", ip: "203.0.113.10", port: 993, close_reason: "timeout",
+                                           closed_at: 1.minute.ago, transcript: "<= a1 CAPABILITY")
+    MailOnRails::SessionTranscript.create!(protocol: "smtp", ip: "203.0.113.11", port: 25, close_reason: "timeout",
+                                           closed_at: 3.days.ago, transcript: "<= EHLO old.test")
+
+    get smtp_path
+
+    assert_response :success
+    assert_select "h2", "Captured sessions"
+    assert_match "203.0.113.9", response.body
+    assert_match "protocol errors", response.body
+    assert_match "EHLO scanner.test · AUTH LOGIN · GET / HTTP/1.1", response.body
+    assert_select "a[href=?]", session_transcript_path(smtp), text: "Transcript"
+    assert_no_match "203.0.113.10", response.body # imap capture
+    assert_no_match "203.0.113.11", response.body # outside the 24h window
+    assert_no_match "is off, so nothing new", response.body
+
+    get smtp_path(window: "7d")
+    assert_match "203.0.113.11", response.body
+  end
+
+  test "captured sessions say when capture is off and nothing is stored" do
+    get imap_path
+
+    assert_response :success
+    assert_select "h2", "Captured sessions"
+    assert_match "Nothing captured in this window", response.body
+    assert_match "imap_trace_capture is off, so nothing new is being captured", response.body
+  end
+
   test "cached ip attribution renders under addresses; unknown ips get a lookup" do
     MailOnRails::IpEnrichment.create!(ip: "203.0.113.9", looked_up_at: Time.current,
                                       enrichment: { "rdns" => "scanner.evil.example", "asn" => "64496",

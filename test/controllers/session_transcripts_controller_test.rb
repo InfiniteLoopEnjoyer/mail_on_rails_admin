@@ -52,6 +52,9 @@ class SessionTranscriptsControllerTest < ActionDispatch::IntegrationTest
                                           closed_at: Time.current)
     get smtp_path
     assert_response :success
-    assert_select "a[href=?]", session_transcript_path(transcript), text: "Transcript", count: 1
+    # Once on its history row, once in the captured-sessions table; the
+    # row without a capture links nowhere.
+    assert_select "a[href=?]", session_transcript_path(transcript), text: "Transcript", count: 2
+    assert_select "a[href^='/transcripts/']", count: 3 # + the date link in the captured-sessions table
   end
 end
