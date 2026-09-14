@@ -18,6 +18,12 @@ class AuthAttemptsController < ApplicationController
     @usernames = MailOnRails::AuthAttempt.top_usernames(since: @since)
     @recent_real = MailOnRails::AuthAttempt.against_real_accounts.recent(@since)
                               .order(occurred_at: :desc).limit(25)
+    # The web login gets its own list, every attempt and not just those on
+    # a login that exists: it is the admin UI's front door and sees little
+    # traffic, so each row is worth a look. Rollup rows (an address past
+    # the per-IP cap) come along as one collapsed line each.
+    @recent_web = MailOnRails::AuthAttempt.recent(@since).where(source: "web")
+                             .order(occurred_at: :desc).limit(25)
     # The password column appears while the setting is on (so a fresh
     # switch-on is visible before the first row lands) and for as long as
     # kept passwords remain listed after it is switched off.

@@ -67,6 +67,50 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
     assert_match "carol@example.com", response.body
   end
 
+  # The web login guards this very UI, so its attempts are broken out: a
+  # per-surface count even at zero, and a list of every failed sign-in
+  # whether or not the login name exists (the real-address table above
+  # only shows the ones that do).
+  test "breaks attempts down by surface, web login included at zero" do
+    log(username: "cyrus", source: "smtp")
+    log(username: "postgres", source: "imap")
+    log(username: "postgres", source: "imap")
+
+    get auth_attempts_path
+    assert_response :success
+    assert_select "div", text: "Web login"
+    assert_select "h2", text: "Web login attempts"
+    assert_match "No failed web sign-ins in this window", response.body
+  end
+
+  test "lists every failed web sign-in and marks logins that exist" do
+    log(username: "admin", source: "web", ip: "203.0.113.5")
+    log(username: users(:one).email_address, source: "web", outcome: "bad_credentials", ip: "203.0.113.6")
+    log(username: "cyrus", source: "smtp", ip: "203.0.113.7") # not a web attempt
+
+    get auth_attempts_path
+    assert_response :success
+    assert_select "h2", text: "Web login attempts"
+    assert_select "span[title='This login exists']", text: "real", count: 1
+    section = response.body[/Web login attempts.*?Banned IPs/m]
+    assert_match "admin", section
+    assert_match "203.0.113.5", section
+    assert_match users(:one).email_address, section
+    assert_no_match(/203\.0\.113\.7/, section)
+  end
+
+  test "web sign-ins past the per-IP cap show as one collapsed line" do
+    previous = ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"]
+    ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"] = "2"
+    5.times { |i| log(username: "guess#{i}", source: "web", ip: "203.0.113.5") }
+
+    get auth_attempts_path
+    assert_match "3 attempts from 203.0.113.5 collapsed", response.body
+  ensure
+    previous ? ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"] = previous
+             : ENV.delete("MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP")
+  end
+
   # The password column exists only for the operator who switched it on:
   # off (the default) there is no column and nothing to show in it.
   test "hides the password column by default" do

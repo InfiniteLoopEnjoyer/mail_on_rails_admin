@@ -13,12 +13,20 @@ p.mb-4.text-sm.text-slate-500.dark:text-slate-400
   ' are real people mistyping, so the column fills with working credentials
   ' for these very mailboxes.
 
-section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
+section.mb-3.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
   - [["Attempts", @totals[:attempts]], ["Source addresses", @totals[:sources]], ["Addresses tried", @totals[:usernames]], ["Against real accounts", @totals[:real_accounts]]].each do |label, value|
     .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
       .text-xs.text-slate-500.dark:text-slate-400= label
       .text-2xl.font-bold class=(label == "Against real accounts" && value.to_i.positive? ? "text-red-700 dark:text-red-400" : "")
         = number_with_delimiter(value)
+
+/ The same attempts split by the surface they arrived on. The web login
+/ is the one that guards this UI, so its count is called out even at zero.
+section.mb-5.grid.gap-3 class="sm:grid-cols-3"
+  - { "smtp" => "SMTP AUTH", "imap" => "IMAP", "web" => "Web login" }.each do |source, label|
+    .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
+      .text-xs.text-slate-500.dark:text-slate-400= label
+      .text-2xl.font-bold= number_with_delimiter(@totals[:by_source].fetch(source, 0))
 
 - if @blocks.any?
   section.mb-5.rounded-lg.border.border-amber-200.dark:border-amber-900.bg-white.dark:bg-slate-900
@@ -129,6 +137,48 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
               td.px-4.py-1.5.text-right
                 - if attempt.ip.present?
                   = render "ban_button", target: attempt.ip, confirm: "Ban #{attempt.ip}? It loses SMTP, IMAP and web login access."
+
+section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+  header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+    h2.font-semibold Web login attempts
+    p.text-sm.text-slate-500.dark:text-slate-400
+      ' Every failed sign-in to this admin UI in the selected window, newest
+      ' first - whether or not the login name exists. Names that do exist
+      ' are marked; the step-up password check counts here too.
+  - if @recent_web.any?
+    .overflow-x-auto
+      table.w-full.text-sm
+        thead.text-left.text-xs.text-slate-500.dark:text-slate-400
+          tr
+            th.px-4.py-2 When
+            th.px-4.py-2 Login tried
+            th.px-4.py-2 From
+            th.px-4.py-2 Outcome
+            - if @show_passwords
+              th.px-4.py-2 Password tried
+            th.px-4.py-2
+        tbody
+          - @recent_web.each do |attempt|
+            tr.border-t.border-slate-100.dark:border-slate-800
+              - if attempt.rollup?
+                td.px-4.py-1.5.whitespace-nowrap.text-slate-500.dark:text-slate-400= attempt.occurred_at.strftime("%b %-d %H:%M")
+                td.px-4.py-1.5.text-slate-500.dark:text-slate-400 colspan=(@show_passwords ? 3 : 2)
+                  = "#{number_with_delimiter(attempt.attempt_count)} attempts from #{attempt.ip} collapsed (hour starting #{attempt.occurred_at.strftime("%H:%M")})"
+              - else
+                td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300= attempt.occurred_at.strftime("%b %-d %H:%M")
+                td.px-4.py-1.5.font-mono.break-all class=(attempt.account_exists ? "text-red-700 dark:text-red-400 font-semibold" : "")
+                  = attempt.username || "-"
+                  - if attempt.account_exists
+                    span.ml-2.inline-block.rounded.bg-red-50.px-1.5.py-0.5.font-sans.text-xs.font-medium.text-red-800.dark:bg-red-950.dark:text-red-300 title="This login exists" real
+                td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= attempt.ip || "?"
+                td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.outcome.tr("_", " ")
+                - if @show_passwords
+                  td.px-4.py-1.5.font-mono.break-all.text-red-700.dark:text-red-400= attempt.password
+              td.px-4.py-1.5.text-right
+                - if attempt.ip.present?
+                  = render "ban_button", target: attempt.ip, confirm: "Ban #{attempt.ip}? It loses SMTP, IMAP and web login access."
+  - else
+    p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 No failed web sign-ins in this window.
 
 section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
   header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
