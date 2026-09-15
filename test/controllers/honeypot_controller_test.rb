@@ -37,6 +37,21 @@ class HoneypotControllerTest < ActionDispatch::IntegrationTest
     assert_match "observed", response.body
   end
 
+  test "lists foreign-protocol and garbage hits and counts them as probes" do
+    record(trigger: "foreign_protocol", ip: "198.51.100.9", signature: "http_request")
+    record(trigger: "garbage", ip: "198.51.100.10", signature: "control_bytes", protocol: "imap")
+    record(trigger: "exploit_probe", ip: "198.51.100.11", signature: "exim_run")
+
+    get honeypot_events_path
+    assert_response :success
+    assert_match "foreign protocol", response.body
+    assert_match "http_request", response.body
+    assert_match "garbage", response.body
+    assert_match "control_bytes", response.body
+    assert_select "div", text: "Probes"
+    assert_select "div", text: "3"
+  end
+
   test "lists canary accounts" do
     MailOnRails::EmailAccount.create!(email: "canary@example.test", password: "secret123", honeypot: true)
     MailOnRails::EmailAccount.create!(email: "real@example.test", password: "secret123")

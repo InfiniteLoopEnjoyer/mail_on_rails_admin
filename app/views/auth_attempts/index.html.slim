@@ -189,7 +189,9 @@ section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.d
       ' its greeting, and the web login refuses to look at credentials.
       ' AuthThrottle's automatic blocks expire; these stay until removed
       ' here. With the auth_auto_ban setting on, a failed SMTP/IMAP login
-      ' adds its source here automatically (marked auto).
+      ' adds its source here automatically; with protocol_auto_ban on, so
+      ' does a honeypot probe hit (HTTP at a mail port, garbage bytes, an
+      ' exploit payload). Both are marked auto.
   .px-4.py-3
     = form_with url: banned_ips_path, scope: :banned_ip, method: :post do |form|
       = hidden_field_tag :window, @window
@@ -212,8 +214,9 @@ section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.d
           tr.border-t.border-slate-100.dark:border-slate-800
             td.px-4.py-1.5.font-mono
               = ban.cidr
-              - if ban.source == "auth_failure"
-                span.ml-2.inline-block.rounded.bg-amber-50.px-1.5.py-0.5.font-sans.text-xs.font-medium.text-amber-800.dark:bg-amber-950.dark:text-amber-300 title="Banned automatically by the auth_auto_ban setting" auto
+              - if MailOnRails::BannedIp::AUTOMATIC_SOURCES.include?(ban.source)
+                - setting = ban.source == "auth_failure" ? "auth_auto_ban" : "protocol_auto_ban"
+                span.ml-2.inline-block.rounded.bg-amber-50.px-1.5.py-0.5.font-sans.text-xs.font-medium.text-amber-800.dark:bg-amber-950.dark:text-amber-300 title="Banned automatically by the #{setting} setting" auto
             td.px-4.py-1.5.text-slate-600.dark:text-slate-300= ban.note
             td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300= ban.created_at.strftime("%b %-d")
             td.px-4.py-1.5.text-right

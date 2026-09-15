@@ -136,18 +136,23 @@ the connection teardown. Returns `{}`.
 
 ### `record_honeypot_event(info)` — optional
 
-Persist one honeypot hit (a canary login or an exploit-probe payload) for the
-Rails UI's honeypot dashboard, and return `{ id: }` so the server can update
-the transcript at teardown. `info` is a plain-values hash assembled by the
-session: `protocol:, trigger:, signature:, ip:, port:, username:, helo:,
-transcript:, occurred_at:`. `trigger` is `"canary_auth"` or
-`"exploit_probe"`. Optional and `respond_to?`-guarded like
-`record_closed_connection`; a store without it disables honeypot recording.
-Best-effort — must never raise into the live session. The app's adapter
-(`HoneypotEvent`) also runs a graduated, collateral-aware response on create
-(a canary login temporarily throttles the source unless it is allowlisted or
-shared with a real tenant; a probe is recorded only — never an automatic
-permanent ban) and enqueues DNS enrichment.
+Persist one honeypot hit (a canary login, an exploit-probe payload, another
+protocol spoken at a mail port, or garbage bytes) for the Rails UI's honeypot
+dashboard, and return `{ id: }` so the server can update the transcript at
+teardown. `info` is a plain-values hash assembled by the session: `protocol:,
+trigger:, signature:, ip:, port:, username:, helo:, transcript:,
+occurred_at:`. `trigger` is `"canary_auth"`, `"exploit_probe"`,
+`"foreign_protocol"` or `"garbage"`; `signature` names the
+`Netserv::ProbeSignatures` entry that fired (`"http_request"`,
+`"tls_handshake"`, `"control_bytes"`, ...). Optional and `respond_to?`-guarded
+like `record_closed_connection`; a store without it disables honeypot
+recording. Best-effort — must never raise into the live session. The app's
+adapter (`HoneypotEvent`) also runs a graduated, collateral-aware response on
+create (a canary login temporarily throttles the source unless it is
+allowlisted or shared with a real tenant; a probe is recorded only, unless the
+`protocol_auto_ban` setting is on — then its source gets a permanent
+`BannedIp`, the allowlist being the only exception) and enqueues DNS
+enrichment.
 
 ### `update_honeypot_transcript(id, transcript:)` — optional
 

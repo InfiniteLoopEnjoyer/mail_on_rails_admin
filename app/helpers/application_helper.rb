@@ -47,6 +47,17 @@ module ApplicationHelper
            : "#{base} text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100"
   end
 
+  # Honeypot trigger label: red for an exploit payload, amber for a canary
+  # login, slate for scanner noise (a foreign protocol, garbage bytes).
+  # Class literals for Tailwind's scanner.
+  def trigger_classes(trigger)
+    case trigger
+    when "exploit_probe" then "text-red-700 dark:text-red-400 font-medium"
+    when "canary_auth" then "text-amber-700 dark:text-amber-400 font-medium"
+    else "text-slate-700 dark:text-slate-300 font-medium"
+    end
+  end
+
   # Sidebar link classes; child items are indented + a shade lighter to read
   # as nested. Keep every class literal so Tailwind's scanner sees them.
   def nav_link_classes(active, child: false)

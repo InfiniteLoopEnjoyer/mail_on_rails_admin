@@ -24,6 +24,7 @@ class SettingsControllerTest < ActionDispatch::IntegrationTest
     # The auto-ban switch ships off and is flipped from this page.
     assert_select "select[name='settings[auth_auto_ban]'] option[value='']", text: "Default (off)"
     assert_select "input[name='settings[auth_auto_ban_failures]'][placeholder='1']"
+    assert_select "select[name='settings[protocol_auto_ban]'] option[value='']", text: "Default (off)"
     # Boot-only settings are never rendered.
     assert_select "input[name='settings[smtp_port]']", count: 0
     assert_select "input[name='settings[smtp_rspamd_password]']", count: 0

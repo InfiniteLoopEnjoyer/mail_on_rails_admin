@@ -23,7 +23,7 @@ class HoneypotController < ApplicationController
       events: scope.count,
       sources: scope.where.not(ip: nil).distinct.count(:ip),
       canary_auths: scope.where(trigger: "canary_auth").count,
-      probes: scope.where(trigger: "exploit_probe").count
+      probes: scope.where(trigger: MailOnRails::HoneypotEvent::PROBE_TRIGGERS).count
     }
     @events = scope.order(occurred_at: :desc).limit(100)
     @canaries = MailOnRails::EmailAccount.honeypots.order(:email)

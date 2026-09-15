@@ -56,9 +56,10 @@ control, the Prometheus endpoint, and the production deploy config.
   running listeners converge without a restart.
 - **Security operations** — banned IPs/CIDRs enforced at every edge
   (manual, or automatic for failed SMTP/IMAP logins with the
-  `auth_auto_ban` setting, off by default); a honeypot intelligence dashboard (canary logins and exploit probes,
-  with DNS/ASN enrichment, auto-throttle, and manual ban/kick
-  escalation); live IMAP and SMTP connection pages with kick; auth
+  `auth_auto_ban` setting, off by default); a honeypot intelligence dashboard (canary logins, exploit probes,
+  HTTP and other foreign protocols at a mail port, garbage bytes; with DNS/ASN enrichment, auto-throttle,
+  manual ban/kick escalation, or automatic permanent bans of probe sources with the `protocol_auto_ban`
+  setting, off by default); live IMAP and SMTP connection pages with kick; auth
   attempt, tarpit, and lockout visibility (optionally with the password
   each failed login tried, `auth_log_passwords`, off by default); an
   audit log of admin actions.

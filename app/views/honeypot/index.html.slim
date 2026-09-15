@@ -9,13 +9,21 @@ header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
 
 p.mb-4.text-sm.text-slate-500.dark:text-slate-400
   ' Interactions only an attacker would have: a login against a canary account,
-  ' or an exploit-probe payload thrown at a listener. Each hit is recorded with a
-  ' redacted transcript. A canary login earns a temporary, auto-expiring throttle
-  ' (never on an allowlisted or shared address); probes are recorded only. A
-  ' permanent ban or a live kick stays your call, per row below.
+  ' an exploit-probe payload thrown at a listener, another protocol spoken at a
+  ' mail port (an HTTP request, a TLS handshake on the plaintext port), or
+  ' garbage bytes. Each hit is recorded with a redacted transcript. A canary
+  ' login earns a temporary, auto-expiring throttle (never on an allowlisted or
+  ' shared address). Probes are recorded only, so a permanent ban or a live kick
+  ' is your call per row below -
+  - if MailOnRails::Settings[:protocol_auto_ban]
+    ' except that the protocol_auto_ban setting is on, so every probe source is
+    ' banned permanently on sight (the honeypot allowlist excepted).
+  - else
+    ' unless you switch the protocol_auto_ban setting on, which bans every probe
+    ' source permanently on sight (the honeypot allowlist excepted).
 
 section.mb-5.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
-  - [["Events", @totals[:events]], ["Source addresses", @totals[:sources]], ["Canary logins", @totals[:canary_auths]], ["Exploit probes", @totals[:probes]]].each do |label, value|
+  - [["Events", @totals[:events]], ["Source addresses", @totals[:sources]], ["Canary logins", @totals[:canary_auths]], ["Probes", @totals[:probes]]].each do |label, value|
     .rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-3
       .text-xs.text-slate-500.dark:text-slate-400= label
       .text-2xl.font-bold class=(value.to_i.positive? && label != "Source addresses" ? "text-red-700 dark:text-red-400" : "")
@@ -51,7 +59,7 @@ section.mb-5.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.d
                   .text-xs.text-slate-500.dark:text-slate-400.font-mono= enr[:rdns]
               td.px-4.py-1.5.uppercase.text-slate-600.dark:text-slate-300= event.protocol
               td.px-4.py-1.5
-                span class=(event.trigger == "exploit_probe" ? "text-red-700 dark:text-red-400 font-medium" : "text-amber-700 dark:text-amber-400 font-medium")
+                span class=(trigger_classes(event.trigger))
                   = event.trigger.tr("_", " ")
               td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= event.signature || event.username
               td.px-4.py-1.5.text-xs.text-slate-500.dark:text-slate-400= event.response
