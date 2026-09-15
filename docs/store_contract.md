@@ -369,5 +369,9 @@ source IP, applied disposition, per-mechanism alignment, published
 policy tags). Best-effort — it always returns `nil`, never fails the
 caller, and sessions skip stores that do not respond to it.
 `SendDmarcReportsJob` rolls the rows into the daily aggregate reports
-sent to each policy domain's `rua=` addresses.
+sent to each policy domain's `rua=` addresses. One shape is deliberately
+not recorded: null-sender mail (`MAIL FROM:<>`) that quotes the
+Message-ID of one of our own reports (`MailOnRails::AggregateReport`) —
+a bounce of a report is not evidence about the bouncing domain, and
+reporting it would earn the same bounce again the next night.
 
