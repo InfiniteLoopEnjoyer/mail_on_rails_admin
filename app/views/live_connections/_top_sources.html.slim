@@ -1,7 +1,8 @@
 / Repeat offenders: connection totals per address in the selected window
 / (ClosedConnection.top_sources), busiest first. Rollup counters weigh in,
 / so a scanner whose noise the history table collapses still shows its
-/ real total here. Live connections only count once they close.
+/ real total here. Idle is how many of them did no mail work - what the
+/ idle_auto_ban setting counts. Live connections only count once they close.
 - if @top_sources.any?
   section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
     header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
@@ -9,13 +10,16 @@
       p.text-sm.text-slate-500.dark:text-slate-400
         ' Addresses with the most connections in the selected window,
         ' including ones the history below collapses. A high count with
-        ' zero authenticated sessions is the signature of a scanner.
+        ' zero authenticated sessions is the signature of a scanner; idle
+        ' connections are the ones that never sent a message or tried to
+        ' log in.
     table.w-full.text-sm
       thead.text-left.text-xs.text-slate-500.dark:text-slate-400
         tr
           th.px-4.py-2 Address
           th.px-4.py-2.text-right Connections
           th.px-4.py-2.text-right Authenticated
+          th.px-4.py-2.text-right Idle
           th.px-4.py-2 Last seen
           th.px-4.py-2
       tbody
@@ -27,6 +31,8 @@
             td.px-4.py-1.5.text-right.tabular-nums= number_with_delimiter(source[:connections])
             td.px-4.py-1.5.text-right.tabular-nums class=(source[:authenticated].zero? ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-300")
               = source[:authenticated]
+            td.px-4.py-1.5.text-right.tabular-nums class=(source[:idle].zero? ? "text-slate-400 dark:text-slate-500" : "text-amber-700 dark:text-amber-400")
+              = number_with_delimiter(source[:idle])
             td.px-4.py-1.5.text-slate-600.dark:text-slate-300 title=source[:last_seen].strftime("%b %-d %H:%M:%S")
               = "#{time_ago_in_words(source[:last_seen])} ago"
             td.px-4.py-1.5.text-right

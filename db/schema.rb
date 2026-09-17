@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_06_000000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_17_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -151,6 +151,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_06_000000) do
     t.float "duration_seconds"
     t.string "final_state"
     t.string "helo"
+    t.integer "idle_count", default: 0, null: false
+    t.string "idle_reason"
     t.string "ip"
     t.integer "messages"
     t.integer "port"

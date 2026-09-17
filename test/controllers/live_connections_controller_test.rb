@@ -193,6 +193,24 @@ class LiveConnectionsControllerTest < ActionDispatch::IntegrationTest
     assert_match "198.51.100.9", response.body
   end
 
+  test "idle connections wear their shape, and the counts reach top sources and rollup rows" do
+    2.times do
+      MailOnRails::ClosedConnection.create!(protocol: "smtp", ip: "203.0.113.9", port: 25, role: "mx",
+                               idle_count: 1, idle_reason: "tls_only", closed_at: 1.hour.ago)
+    end
+    MailOnRails::ClosedConnection.create!(protocol: "smtp", ip: "203.0.113.9", rollup: true, connection_count: 40,
+                             idle_count: 38, closed_at: 2.hours.ago)
+
+    get smtp_path
+
+    assert_response :success
+    assert_select "span[title='Did no mail work - counted by the idle_auto_ban setting']", text: "idle: tls only", count: 2
+    assert_match "40 connections collapsed", response.body
+    assert_match ", 38 idle", response.body
+    assert_select "th", text: "Idle"
+    assert_select "td", text: "40" # top sources: 2 + 38 idle of 42 connections
+  end
+
   # Captured sessions get their own table: the point is to read several
   # in a row, so they must not be hunted for among the history rows.
   test "captured sessions list the protocol's transcripts in the window with a preview" do

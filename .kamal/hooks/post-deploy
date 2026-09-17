@@ -17,6 +17,13 @@ ATTEMPTS="${MAIL_PORT_ATTEMPTS:-30}"
 # the host's global IPv6 address (when it has one) exercises the ip6tables
 # DNAT path - bash's /dev/tcp takes a bare v6 literal - so a v6 publish
 # that silently broke fails the deploy too.
+#
+# To the listeners every one of these is a connection that says nothing
+# and leaves - exactly what the idle_auto_ban setting counts. The
+# 127.0.0.1 leg arrives from the bridge gateway, which is never banned,
+# but the v6 leg can arrive as the host's own global address: put that
+# address (its /64) on honeypot_allowlist before turning idle_auto_ban
+# on, or a couple of deploys ban the host from its own mail ports.
 probe() {
   local host=$1 addr=$2 port=$3
   for _ in $(seq 1 "$ATTEMPTS"); do

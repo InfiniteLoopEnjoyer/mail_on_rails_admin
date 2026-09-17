@@ -129,7 +129,12 @@ Persist one closed connection for the Rails UI's history section (both
 protocols; the SMTP server calls it too). `info` is a plain-values hash
 assembled by the server's close path: `protocol:, ip:, port:, role:,
 connected_at:, closed_at:, duration_seconds:` plus the session's
-`live_info` fields (`user:, state:, tls:, helo:, messages:`). Optional:
+`live_info` fields (`user:, state:, tls:, helo:, messages:`). A
+connection that did no mail work and that the peer (not a kick or a
+shutdown) ended carries `idle:` — the shape it had (`silent`,
+`greeting_only`, `tls_only`, `no_transaction`, `no_auth`,
+`tls_handshake_failed`); the app's adapter records it on the history row
+and counts it toward the `idle_auto_ban` setting. Optional:
 servers call it behind `respond_to?`, so a store without it (the memory
 stores) simply keeps no history. Best-effort — must never raise into
 the connection teardown. Returns `{}`.

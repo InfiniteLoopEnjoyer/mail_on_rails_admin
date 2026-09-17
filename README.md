@@ -59,7 +59,12 @@ control, the Prometheus endpoint, and the production deploy config.
   `auth_auto_ban` setting, off by default); a honeypot intelligence dashboard (canary logins, exploit probes,
   HTTP and other foreign protocols at a mail port, garbage bytes; with DNS/ASN enrichment, auto-throttle,
   manual ban/kick escalation, or automatic permanent bans of probe sources with the `protocol_auto_ban`
-  setting, off by default); live IMAP and SMTP connection pages with kick; auth
+  setting, off by default); automatic bans of addresses that keep connecting without ever doing mail
+  work - census scanners, banner and certificate grabbers - with the `idle_auto_ban` setting (off by
+  default; decided after a grace period, never for an address that logged in or delivered mail lately
+  or whose confirmed reverse DNS is a known sender or TLS tester - put uptime monitors and the deploy
+  host's own addresses on `honeypot_allowlist` before turning it on, since `.kamal/hooks/post-deploy`
+  bare-connects every mail port); live IMAP and SMTP connection pages with kick; auth
   attempt, tarpit, and lockout visibility (optionally with the password
   each failed login tried, `auth_log_passwords`, off by default); an
   audit log of admin actions.

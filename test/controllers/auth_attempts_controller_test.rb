@@ -209,6 +209,19 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
     assert_select "form[action=?]", banned_ip_path(MailOnRails::BannedIp.sole, window: "7d")
   end
 
+  test "automatic bans of idle scanners name their setting" do
+    MailOnRails::BannedIp.create!(cidr: "203.0.113.9", source: "idle_scanner",
+                                  note: "auto: 3 idle sessions in 24h (last: tls only on smtp)")
+    log(username: "cyrus", ip: "203.0.113.9")
+
+    get auth_attempts_path
+    assert_match "auto: 3 idle sessions in 24h", response.body
+    assert_select "span[title='Banned automatically by the idle_auto_ban setting']", text: "auto"
+
+    get range_auth_attempts_path(cidr: "203.0.113.0/24")
+    assert_select "span[title='Covered by 203.0.113.9 (auto: idle scanner)']", text: "banned"
+  end
+
   test "the index manages manual bans and summarizes DROP imports" do
     MailOnRails::BannedIp.create!(cidr: "203.0.113.0/24", note: "spray campaign")
     MailOnRails::BannedIp.create!(cidr: "198.51.100.0/24", source: "spamhaus_drop")

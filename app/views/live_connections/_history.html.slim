@@ -1,6 +1,8 @@
 / The history section under the live table: connections that ended in
 / the selected window (ClosedConnection), newest first, rollup counter
-/ rows rendered as one collapsed line. The teardown that writes a row
+/ rows rendered as one collapsed line. A connection that did no mail work
+/ carries the shape it had (idle_reason - what the idle_auto_ban setting
+/ counts) as a badge in the User cell. The teardown that writes a row
 / here also triggers a refresh broadcast, so a closing connection moves
 / from the live table to here within one refresh.
 section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
@@ -39,6 +41,8 @@ section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.d
                 = render "ip_meta", ip: row.ip
               td.px-4.py-1.5.text-slate-500.dark:text-slate-400 colspan=(controller_name == "smtp" ? 8 : 7)
                 = "#{number_with_delimiter(row.connection_count)} connections collapsed (hour starting #{row.closed_at.strftime("%b %-d %H:%M")})"
+                - if row.idle_count.positive?
+                  = ", #{number_with_delimiter(row.idle_count)} idle"
             - else
               td.px-4.py-1.5.font-mono.break-all
                 = row.ip || "?"
@@ -48,7 +52,12 @@ section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.d
                 - if row.role
                   span.ml-1.text-xs.text-slate-500.dark:text-slate-400= row.role
               td.px-4.py-1.5.text-slate-600.dark:text-slate-300= row.tls? ? "✓" : "-"
-              td.px-4.py-1.5.font-mono.break-all= row.username || "-"
+              td.px-4.py-1.5.font-mono.break-all
+                - if row.idle_reason
+                  span.inline-block.rounded.bg-slate-100.px-1.5.py-0.5.font-sans.text-xs.font-medium.text-slate-600.dark:bg-slate-800.dark:text-slate-300 title="Did no mail work - counted by the idle_auto_ban setting"
+                    = "idle: #{row.idle_reason.tr("_", " ")}"
+                - else
+                  = row.username || "-"
               - if controller_name == "smtp"
                 td.px-4.py-1.5.font-mono.break-all.text-slate-600.dark:text-slate-300= row.helo || "-"
                 td.px-4.py-1.5.text-right.tabular-nums.text-slate-600.dark:text-slate-300= row.messages || "-"
