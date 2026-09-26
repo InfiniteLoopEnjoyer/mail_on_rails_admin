@@ -76,13 +76,17 @@ class AuthAttemptTest < ActiveSupport::TestCase
     assert_nil MailOnRails::AuthAttempt.sole.password, "nothing kept unless the operator opts in"
   end
 
-  test "with auth_log_passwords on, a bad password for a real address is kept encrypted" do
+  test "with auth_log_passwords on, every checked guess is kept encrypted, real address or not" do
     MailOnRails::Setting.write(:auth_log_passwords, "1")
     record(username: REAL, outcome: "bad_credentials", password: "hunter2")
-    record(username: "nobody@example.com", outcome: "bad_credentials", password: "hunter2")
+    record(username: "nobody@example.com", outcome: "bad_credentials", password: "letmein")
+    record(username: REAL, outcome: "throttled", password: "unchecked")
 
-    assert_equal "hunter2", MailOnRails::AuthAttempt.find_by(username: REAL).password
-    assert_nil MailOnRails::AuthAttempt.find_by(username: "nobody@example.com").password, "unknown addresses never keep one"
+    assert_equal "hunter2", MailOnRails::AuthAttempt.find_by(username: REAL, outcome: "bad_credentials").password
+    assert_equal "letmein", MailOnRails::AuthAttempt.find_by(username: "nobody@example.com").password,
+                 "a guess at an unknown address may be one of our own passwords under a stale name"
+    assert_nil MailOnRails::AuthAttempt.find_by(outcome: "throttled").password,
+               "a throttled attempt never had its password checked"
     raw = MailOnRails::AuthAttempt.connection.select_value(
       MailOnRails::AuthAttempt.where(username: REAL).select(:password).to_sql
     )

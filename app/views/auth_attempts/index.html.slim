@@ -9,9 +9,10 @@ header.mb-4.flex.flex-wrap.items-center.justify-between.gap-x-3.gap-y-2
 
 p.mb-4.text-sm.text-slate-500.dark:text-slate-400
   ' Failed credential checks from all three auth surfaces. Passwords are
-  ' not recorded unless the auth_log_passwords setting is on - most failures
-  ' are real people mistyping, so the column fills with working credentials
-  ' for these very mailboxes.
+  ' not recorded unless the auth_log_passwords setting is on; with it on,
+  ' every checked guess is kept, real address or not - most failures on
+  ' real addresses are people mistyping, so the column fills with working
+  ' credentials for these very mailboxes.
 
 section.mb-3.grid.gap-3 class="sm:grid-cols-2 lg:grid-cols-4"
   - [["Attempts", @totals[:attempts]], ["Source addresses", @totals[:sources]], ["Addresses tried", @totals[:usernames]], ["Against real accounts", @totals[:real_accounts]]].each do |label, value|

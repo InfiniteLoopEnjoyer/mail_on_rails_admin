@@ -1,6 +1,6 @@
 GIT
   remote: https://github.com/InfiniteLoopEnjoyer/mail_on_rails.git
-  revision: 3aad55c8223ed0ddc6fe3a76ca46bd80479fc165
+  revision: 0b552a1f2a139a2d61c000b0ba527fd7ea6fe93f
   branch: main
   specs:
     mail_on_rails (0.1.0)
