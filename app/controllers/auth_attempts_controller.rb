@@ -16,19 +16,19 @@ class AuthAttemptsController < ApplicationController
     @targeted = MailOnRails::AuthAttempt.targeted_accounts(since: @since)
     @ranges = MailOnRails::AuthAttempt.top_ranges(since: @since)
     @usernames = MailOnRails::AuthAttempt.top_usernames(since: @since)
-    @recent_real = MailOnRails::AuthAttempt.against_real_accounts.recent(@since)
-                              .order(occurred_at: :desc).limit(25)
-    # The web login gets its own list, every attempt and not just those on
-    # a login that exists: it is the admin UI's front door and sees little
-    # traffic, so each row is worth a look. Rollup rows (an address past
+    # The newest attempts on any address, dictionary noise and real
+    # mailboxes alike (real ones are marked). Rollup rows (an address past
     # the per-IP cap) come along as one collapsed line each.
+    @recent = MailOnRails::AuthAttempt.recent(@since).order(occurred_at: :desc).limit(25)
+    # The web login gets its own list as well: it is the admin UI's front
+    # door and sees little traffic, so each row is worth a look on its own.
     @recent_web = MailOnRails::AuthAttempt.recent(@since).where(source: "web")
                              .order(occurred_at: :desc).limit(25)
     # The password column appears while the setting is on (so a fresh
     # switch-on is visible before the first row lands) and for as long as
     # kept passwords remain listed after it is switched off.
     @show_passwords = MailOnRails::Settings[:auth_log_passwords] ||
-                      @recent_real.any? { |attempt| attempt.password.present? }
+                      (@recent + @recent_web).any? { |attempt| attempt.password.present? }
     # AuthThrottle blocks currently in force (they expire on their own; the
     # window tabs above don't apply - "currently" is the only window).
     @blocks = MailOnRails::AuthThrottle.active_blocks.to_a

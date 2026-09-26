@@ -67,10 +67,38 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
     assert_match "carol@example.com", response.body
   end
 
+  # The recent table is every attempt, not just the ones on an address
+  # that exists: dictionary noise is what the operator wants to eyeball
+  # too, with the real hits marked rather than filtered.
+  test "lists the most recent attempts on any address and marks the real ones" do
+    log(username: "cyrus", ip: "203.0.113.7")
+    log(username: "carol@example.com", outcome: "bad_credentials", ip: "203.0.113.8", source: "imap")
+
+    get auth_attempts_path
+    assert_response :success
+    assert_select "h2", text: "Most recent attempts"
+    section = response.body[/Most recent attempts.*?Web login attempts/m]
+    assert_match "cyrus", section
+    assert_match "203.0.113.7", section
+    assert_match "carol@example.com", section
+    assert_select "span[title='This address exists']", text: "real", count: 1
+  end
+
+  test "recent attempts past the per-IP cap show as one collapsed line" do
+    previous = ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"]
+    ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"] = "2"
+    5.times { |i| log(username: "guess#{i}", ip: "203.0.113.5", source: "imap") }
+
+    get auth_attempts_path
+    assert_match "3 attempts from 203.0.113.5 on imap collapsed", response.body
+  ensure
+    previous ? ENV["MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP"] = previous
+             : ENV.delete("MAIL_ON_RAILS_AUTH_LOG_MAX_ROWS_PER_IP")
+  end
+
   # The web login guards this very UI, so its attempts are broken out: a
   # per-surface count even at zero, and a list of every failed sign-in
-  # whether or not the login name exists (the real-address table above
-  # only shows the ones that do).
+  # on its own.
   test "breaks attempts down by surface, web login included at zero" do
     log(username: "cyrus", source: "smtp")
     log(username: "postgres", source: "imap")
@@ -147,6 +175,12 @@ class AuthAttemptsControllerTest < ActionDispatch::IntegrationTest
 
     get auth_attempts_path
     assert_select "h2", text: "Real addresses under attempt", count: 0
+    assert_select "h2", text: "Most recent attempts"
+  end
+
+  test "the recent table has an empty state" do
+    get auth_attempts_path
+    assert_match "No failed logins in this window", response.body
   end
 
   test "the window selector narrows the data" do

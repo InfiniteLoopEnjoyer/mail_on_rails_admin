@@ -102,16 +102,18 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-3"
     - else
       p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 Nothing in this window.
 
-- if @recent_real.any?
-  section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
-    header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
-      h2.font-semibold Most recent attempts on real addresses
+section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
+  header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
+    h2.font-semibold Most recent attempts
+    p.text-sm.text-slate-500.dark:text-slate-400
+      ' The newest failed logins on any surface, newest first, whatever
+      ' address was tried. Addresses that exist are marked.
       - if @show_passwords
-        p.text-sm.text-slate-500.dark:text-slate-400
-          ' The password tried, kept by the auth_log_passwords setting so it
-          ' can be checked against old or breached passwords. Blank when the
-          ' login was SCRAM (the server only ever sees a proof), throttled
-          ' before the check, or made while the setting was off.
+        ' The password tried is kept by the auth_log_passwords setting so it
+        ' can be checked against old or breached passwords. Blank when the
+        ' login was SCRAM (the server only ever sees a proof), throttled
+        ' before the check, or made while the setting was off.
+  - if @recent.any?
     .overflow-x-auto
       table.w-full.text-sm
         thead.text-left.text-xs.text-slate-500.dark:text-slate-400
@@ -125,18 +127,28 @@ section.mb-5.grid.gap-3 class="sm:grid-cols-3"
               th.px-4.py-2 Password tried
             th.px-4.py-2
         tbody
-          - @recent_real.each do |attempt|
+          - @recent.each do |attempt|
             tr.border-t.border-slate-100.dark:border-slate-800
-              td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300= attempt.occurred_at.strftime("%b %-d %H:%M")
-              td.px-4.py-1.5.font-mono= attempt.username
-              td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= attempt.ip
-              td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.source
-              td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.outcome.tr("_", " ")
-              - if @show_passwords
-                td.px-4.py-1.5.font-mono.break-all.text-red-700.dark:text-red-400= attempt.password
+              - if attempt.rollup?
+                td.px-4.py-1.5.whitespace-nowrap.text-slate-500.dark:text-slate-400= attempt.occurred_at.strftime("%b %-d %H:%M")
+                td.px-4.py-1.5.text-slate-500.dark:text-slate-400 colspan=(@show_passwords ? 4 : 3)
+                  = "#{number_with_delimiter(attempt.attempt_count)} attempts from #{attempt.ip} on #{attempt.source} collapsed (hour starting #{attempt.occurred_at.strftime("%H:%M")})"
+              - else
+                td.px-4.py-1.5.whitespace-nowrap.text-slate-600.dark:text-slate-300= attempt.occurred_at.strftime("%b %-d %H:%M")
+                td.px-4.py-1.5.font-mono.break-all class=(attempt.account_exists ? "text-red-700 dark:text-red-400 font-semibold" : "")
+                  = attempt.username || "-"
+                  - if attempt.account_exists
+                    span.ml-2.inline-block.rounded.bg-red-50.px-1.5.py-0.5.font-sans.text-xs.font-medium.text-red-800.dark:bg-red-950.dark:text-red-300 title="This address exists" real
+                td.px-4.py-1.5.font-mono.text-slate-600.dark:text-slate-300= attempt.ip || "?"
+                td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.source
+                td.px-4.py-1.5.text-slate-600.dark:text-slate-300= attempt.outcome.tr("_", " ")
+                - if @show_passwords
+                  td.px-4.py-1.5.font-mono.break-all.text-red-700.dark:text-red-400= attempt.password
               td.px-4.py-1.5.text-right
                 - if attempt.ip.present?
                   = render "ban_button", target: attempt.ip, confirm: "Ban #{attempt.ip}? It loses SMTP, IMAP and web login access."
+  - else
+    p.px-4.py-3.text-sm.text-slate-500.dark:text-slate-400 No failed logins in this window.
 
 section.mt-4.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900
   header.border-b.border-slate-200.dark:border-slate-800.px-4.py-3
