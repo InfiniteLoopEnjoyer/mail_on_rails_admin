@@ -106,7 +106,7 @@ gem "image_processing"
 gem "requestjs-rails"
 gem "ruby-vips"
 
-gem "lexxy", "~> 0.9"
+gem "lexxy", "~> 1.0"
 
 # The mail server itself (SMTP + IMAP, models, migrations, outbound
 # delivery, report handling). Extracted from this app; https so Docker
