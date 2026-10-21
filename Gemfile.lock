@@ -476,7 +476,7 @@ GEM
       bindata (~> 2.4)
       openssl (> 2.0)
       openssl-signature_algorithm (~> 1.0)
-    trilogy (2.13.0)
+    trilogy (2.13.1)
       bigdecimal
     tsort (0.2.0)
     turbo-rails (2.0.23)
@@ -744,7 +744,7 @@ CHECKSUMS
   tilt (2.9.0) sha256=da5735d0280bba96e9a91041bb14aee435ccad5c17b0fa519249ae543d9aa3a5
   timeout (0.6.1) sha256=78f57368a7e7bbadec56971f78a3f5ecbcfb59b7fcbb0a3ed6ddc08a5094accb
   tpm-key_attestation (0.14.2) sha256=3c994239f643822efe67a9cfbbfc357d0cd037a8662d5abb45d4dd79dce0e93c
-  trilogy (2.13.0) sha256=b817a5854e8bd59e7929de58771941b22a30345ad741b458802189592583f244
+  trilogy (2.13.1) sha256=fbfb17c439b347e4240be70b80facf0f6f9c417b34c528179ff065b3d53635c9
   tsort (0.2.0) sha256=9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f
   turbo-rails (2.0.23) sha256=ee0d90733aafff056cf51ff11e803d65e43cae258cc55f6492020ec1f9f9315f
   tzinfo (2.0.6) sha256=8daf828cc77bcf7d63b0e3bdb6caa47e2272dcfaf4fbfe46f8c3a9df087a829b
