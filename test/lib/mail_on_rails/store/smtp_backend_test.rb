@@ -48,6 +48,39 @@ class SmtpBackendTest < ActiveSupport::TestCase
     assert_equal [ "alias@example.test" ], result[:local]
   end
 
+  test "pattern aliases count as local recipients, only where they match" do
+    MailOnRails::Domain.create!(name: "example.test")
+    account = MailOnRails::EmailAccount.find(account_id)
+    account.email_aliases.create!(email: "shop-.*@example.test", pattern: true)
+
+    result = store.local_rcpts([ "Shop-Amazon@Example.test", "nobody@example.test", "shop-x@other.test" ])
+
+    assert_equal [ "shop-amazon@example.test" ], result[:local]
+    assert_equal [ "nobody@example.test" ], result[:unknown_in_local_domain]
+  end
+
+  test "a pattern alias is receive-only: never a sender identity, never an envelope sender" do
+    MailOnRails::Domain.create!(name: "example.test")
+    account = MailOnRails::EmailAccount.find(account_id)
+    account.email_aliases.create!(email: "alias@example.test")
+    account.email_aliases.create!(email: "shop-.*@example.test", pattern: true)
+
+    assert_equal [ account.email, "alias@example.test" ], store.sender_addresses(account.email)
+
+    store.smtp_store("shop-x@example.test", [ "far@remote.test" ], RAW_MESSAGE, account.email)
+    assert_equal account.email, MailOnRails::SmtpOutboundMessage.sole.mail_from
+  end
+
+  test "a honeypot reached through a pattern alias is blackholed" do
+    MailOnRails::Domain.create!(name: "example.test")
+    canary = MailOnRails::EmailAccount.create!(email: "canary@example.test", password: PASSWORD, honeypot: true)
+    canary.email_aliases.create!(email: "trap-.*@example.test", pattern: true)
+
+    assert_no_difference "ActionMailbox::InboundEmail.count" do
+      store.smtp_store("sender@remote.test", [ "trap-1@example.test" ], RAW_MESSAGE, nil)
+    end
+  end
+
   test "hosted domains come from the Domain table too" do
     MailOnRails::Domain.create!(name: "hosted.test")
 

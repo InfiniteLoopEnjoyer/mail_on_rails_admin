@@ -266,9 +266,7 @@ class ComposedEmail
   end
 
   def local_inbox(recipient)
-    local = MailOnRails::EmailAccount.find_by(email: recipient) ||
-            MailOnRails::EmailAlias.find_by(email: recipient)&.email_account
-    local&.inbox
+    MailOnRails::EmailAccount.for_address(recipient)&.inbox
   end
 
   def account_chosen

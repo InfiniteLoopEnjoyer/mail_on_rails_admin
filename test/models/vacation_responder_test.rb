@@ -118,6 +118,10 @@ class VacationResponderTest < ActiveSupport::TestCase
 
     @account.email_aliases.create!(email: "me@example.com")
     assert_not respond(inbound(from: "me@example.com"), return_path: "Me@example.com")
+
+    MailOnRails::Domain.create!(name: "example.com")
+    @account.email_aliases.create!(email: "shop-.*@example.com", pattern: true)
+    assert_not respond(inbound(from: "shop-x@example.com"), return_path: "shop-x@example.com")
     assert_equal 0, MailOnRails::SmtpOutboundMessage.count
   end
 

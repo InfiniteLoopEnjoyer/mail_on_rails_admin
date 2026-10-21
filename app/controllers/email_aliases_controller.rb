@@ -37,6 +37,6 @@ class EmailAliasesController < ApplicationController
   end
 
   def email_alias_params
-    params.expect(email_alias: [ :email ])
+    params.expect(email_alias: [ :email, :pattern ])
   end
 end

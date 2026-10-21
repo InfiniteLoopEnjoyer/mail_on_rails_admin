@@ -106,6 +106,29 @@ class MailroomMailboxTest < ActionMailbox::TestCase
     assert_equal 1, @account.inbox.email_messages.count
   end
 
+  test "mail to a pattern alias delivers to the account's INBOX" do
+    MailOnRails::Domain.create!(name: "example.test")
+    @account.email_aliases.create!(email: "shop-.*@example.test", pattern: true)
+
+    scanning(CLEAN) { receive_inbound_email_from_source(source(to: "Shop-Amazon@Example.test")) }
+
+    assert_equal 1, @account.inbox.email_messages.count
+  end
+
+  test "exact rows beat a catch-all pattern, and one account still gets one copy" do
+    MailOnRails::Domain.create!(name: "example.test")
+    other = MailOnRails::EmailAccount.create!(email: "other@example.test", password: "pw-123456")
+    other.email_aliases.create!(email: "exact@example.test")
+    @account.email_aliases.create!(email: ".*@example.test", pattern: true)
+
+    raw = source.sub("X-Original-To: #{EMAIL}",
+                     "X-Original-To: #{EMAIL}\r\nX-Original-To: caught@example.test\r\nX-Original-To: exact@example.test")
+    scanning(CLEAN) { receive_inbound_email_from_source(raw) }
+
+    assert_equal 1, @account.inbox.email_messages.count, "account + pattern match = one copy"
+    assert_equal 1, other.inbox.email_messages.count, "the exact alias routes to its own account"
+  end
+
   # The trust boundary that matters most: routing follows the SMTP RCPT
   # envelope (X-Original-To), never the DATA headers. A message accepted at
   # RCPT for one local user only must not reach a second local user just

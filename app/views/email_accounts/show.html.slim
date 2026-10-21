@@ -76,13 +76,25 @@ section.mt-8
 - if Current.user.admin?
   section.mt-8
     h2.text-lg.font-bold Aliases
-    p.mb-3.text-sm.text-slate-500.dark:text-slate-400 Mail sent to an alias is delivered to this account's inbox. An alias has no inbox or password of its own and cannot send mail.
+    p.mb-3.text-sm.text-slate-500.dark:text-slate-400
+      | Mail sent to an alias is delivered to this account's inbox. An alias has no inbox or password of its own. Tick
+      em<> Match as pattern
+      | to write a Ruby regular expression before the @ (for example
+      code<> shop-.*@example.com
+      | ), matched case-insensitively against the whole local part; exact accounts and aliases always win, and
+      code<> .*
+      | makes this account the domain's catch-all. Pattern aliases receive only: you cannot send as a matched address.
     ul
-      - @email_account.email_aliases.order(:email).each do |email_alias|
+      - @email_account.email_aliases.order(:pattern, :email).each do |email_alias|
         li.mb-2.flex.items-center.gap-3.rounded-lg.border.border-slate-200.dark:border-slate-800.bg-white.dark:bg-slate-900.px-4.py-2
-          span.text-sm.font-medium= email_alias.email
+          - if email_alias.pattern?
+            span.rounded.border.border-accent.px-2.py-0.5.text-xs.font-medium.text-accent pattern
+          span.text-sm.font-medium class=("font-mono" if email_alias.pattern?) = email_alias.email
           span.ml-auto
             = button_to "Remove", email_account_email_alias_path(@email_account, email_alias), method: :delete, class: "inline-block cursor-pointer rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-slate-900 px-3.5 py-1 text-sm font-medium text-red-700 dark:text-red-400", form: { data: { turbo_confirm: "Remove alias #{email_alias.email}? Mail sent to it will be refused." } }
     = form_with model: [ @email_account, MailOnRails::EmailAlias.new ], class: "flex max-w-lg items-center gap-2" do |form|
-      = form.email_field :email, required: true, placeholder: "alias@#{@email_account.email.split("@").last}", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm"
+      = form.text_field :email, required: true, autocomplete: "off", spellcheck: false, placeholder: "alias@#{@email_account.email.split("@").last}", class: "w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-sm"
+      label.flex.items-center.gap-1.whitespace-nowrap.text-sm
+        = form.check_box :pattern, class: "rounded border-slate-300 dark:border-slate-700"
+        | Match as pattern
       = form.submit "Add alias", class: "inline-block cursor-pointer whitespace-nowrap rounded-md border border-accent bg-accent px-3.5 py-1.5 text-sm font-medium text-white"

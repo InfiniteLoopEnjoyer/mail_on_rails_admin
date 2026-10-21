@@ -32,6 +32,20 @@ class EmailAliasesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "sales@example.com", @account.email_aliases.sole.email
   end
 
+  test "adds a pattern alias and reports a bad pattern" do
+    MailOnRails::Domain.create!(name: "example.com")
+    assert_difference "@account.email_aliases.patterns.count", 1 do
+      post email_account_email_aliases_url(@account), params: { email_alias: { email: "Shop-.*@Example.com", pattern: "1" } }
+    end
+    assert_redirected_to email_account_url(@account)
+    assert_equal "Shop-.*@example.com", @account.email_aliases.patterns.sole.email
+
+    assert_no_difference "MailOnRails::EmailAlias.count" do
+      post email_account_email_aliases_url(@account), params: { email_alias: { email: "shop-(@example.com", pattern: "1" } }
+    end
+    assert_match(/not a valid pattern/, flash[:alert])
+  end
+
   test "rejects an alias that is already an account address" do
     assert_no_difference "MailOnRails::EmailAlias.count" do
       post email_account_email_aliases_url(@account), params: { email_alias: { email: @account.email } }

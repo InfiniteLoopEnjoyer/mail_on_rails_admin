@@ -32,6 +32,19 @@ class EmailAccountsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_reauthentication_path
   end
 
+  test "the account page lists exact and pattern aliases with the form to add one" do
+    MailOnRails::Domain.create!(name: "example.com")
+    @account.email_aliases.create!(email: "sales@example.com")
+    @account.email_aliases.create!(email: "shop-.*@example.com", pattern: true)
+
+    get email_account_url(@account)
+    assert_response :success
+    assert_select "span.font-mono", text: "shop-.*@example.com"
+    assert_select "span", text: "pattern", count: 1
+    assert_select "input[name='email_alias[email]'][type=text]"
+    assert_select "input[name='email_alias[pattern]'][type=checkbox]"
+  end
+
   test "a member's index lists only granted accounts" do
     other = MailOnRails::EmailAccount.create!(email: "dave@example.com", password: "secret123")
     member = users(:member)
