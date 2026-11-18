@@ -281,20 +281,23 @@ class MailboxesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "renames a folder" do
-    patch email_account_mailbox_url(@account, @sent), params: { mailbox: { name: "Outbox" } }
-    assert_redirected_to email_account_mailbox_url(@account, @sent)
-    assert_equal "Outbox", @sent.reload.name
+    archive = @account.mailboxes.create!(name: "Archive")
+    patch email_account_mailbox_url(@account, archive), params: { mailbox: { name: "Archive/2026" } }
+    assert_redirected_to email_account_mailbox_url(@account, archive)
+    assert_equal "Archive/2026", archive.reload.name
   end
 
   test "refuses to rename INBOX" do
     patch email_account_mailbox_url(@account, @inbox), params: { mailbox: { name: "Inbox2" } }
-    assert_response :unprocessable_entity
+    assert_redirected_to email_account_mailbox_url(@account, @inbox)
+    assert flash[:alert].present?
     assert_equal "INBOX", @inbox.reload.name
   end
 
   test "destroys a folder" do
+    archive = @account.mailboxes.create!(name: "Archive")
     assert_difference "MailOnRails::Mailbox.count", -1 do
-      delete email_account_mailbox_url(@account, @sent)
+      delete email_account_mailbox_url(@account, archive)
     end
     assert_redirected_to email_account_url(@account)
   end
@@ -305,5 +308,98 @@ class MailboxesControllerTest < ActionDispatch::IntegrationTest
     end
     assert_redirected_to email_account_mailbox_url(@account, @inbox)
     assert flash[:alert].present?
+  end
+
+  # -- folder names (the IMAP server's rules, enforced for the web forms too) --
+
+  # Each of these used to be saved (CR/LF, a second "inbox", trailing
+  # space) or to answer 500 (NUL: ArgumentError from the driver; 5,000
+  # characters: CookieOverflow from the flash).
+  test "a folder name IMAP could not address is a validation error, never a 500 or a saved row" do
+    [ "Evil\r\n* BYE injected", "x\u0000y", "a" * 5000, "Sent ", " Archive", "inbox", "tab\there", "/top", "a//b" ].each do |name|
+      assert_no_difference "MailOnRails::Mailbox.count", name.inspect[0, 40] do
+        post email_account_mailboxes_url(@account), params: { mailbox: { name: name } }
+      end
+      assert_response :unprocessable_entity, name.inspect[0, 40]
+      assert_select "form li", { minimum: 1 }, "the form should say why #{name.inspect[0, 40]} was refused"
+    end
+  end
+
+  test "renaming to an unaddressable name is a validation error too" do
+    archive = @account.mailboxes.create!(name: "Archive")
+
+    [ "x\u0000y", "Archive\r\n", "a" * 5000, "INBOX", "inbox" ].each do |name|
+      patch email_account_mailbox_url(@account, archive), params: { mailbox: { name: name } }
+      assert_response :unprocessable_entity, name.inspect[0, 40]
+      assert_equal "Archive", archive.reload.name
+    end
+  end
+
+  # The longest legal name, made of characters JSON escapes six-for-one,
+  # would overflow the 4 KB session cookie if the flash quoted it whole.
+  test "the longest legal name is created and deleted without overflowing the flash cookie" do
+    name = "&" * MailOnRails::Mailbox::MAX_NAME_BYTES
+
+    assert_difference "@account.mailboxes.count", 1 do
+      post email_account_mailboxes_url(@account), params: { mailbox: { name: name } }
+    end
+    assert_redirected_to email_account_url(@account)
+    assert_operator flash[:notice].length, :<, 200
+
+    delete email_account_mailbox_url(@account, @account.mailboxes.find_by!(name: name))
+    assert_redirected_to email_account_url(@account)
+    assert_operator flash[:notice].length, :<, 200
+  end
+
+  test "built-in folders cannot be renamed or deleted from the web forms" do
+    @account.quarantine_mailbox
+    %w[INBOX Sent Drafts Trash Junk Quarantine].each do |name|
+      folder = @account.find_mailbox(name)
+
+      get edit_email_account_mailbox_url(@account, folder)
+      assert_redirected_to email_account_mailbox_url(@account, folder), name
+
+      patch email_account_mailbox_url(@account, folder), params: { mailbox: { name: "Renamed #{name}" } }
+      assert_redirected_to email_account_mailbox_url(@account, folder), name
+      assert_match(/built-in folder/, flash[:alert])
+      assert_equal name, folder.reload.name
+
+      assert_no_difference "MailOnRails::Mailbox.count", name do
+        delete email_account_mailbox_url(@account, folder)
+      end
+      assert_redirected_to email_account_mailbox_url(@account, folder), name
+    end
+  end
+
+  test "a built-in folder's page offers no Edit or Delete, an ordinary folder's does" do
+    get email_account_mailbox_url(@account, @account.junk_mailbox)
+    assert_select "a", text: "Edit", count: 0
+    assert_select "button", text: "Delete", count: 0
+
+    get email_account_mailbox_url(@account, @account.mailboxes.create!(name: "Archive"))
+    assert_select "a", text: "Edit", count: 1
+    assert_select "button", text: "Delete", count: 1
+  end
+
+  # -- sender rules written by import (step-up, like SenderRulesController) --
+
+  test "import into Junk writes a sender rule, so a resumed cookie is challenged first" do
+    sign_in_as users(:one), step_up: false
+    raw = "From: boss@corp.example\r\nSubject: x\r\n\r\nx\r\n"
+
+    import_eml eml_upload(raw), mailbox: @account.junk_mailbox
+    assert_redirected_to new_reauthentication_path
+    assert_empty @account.sender_rules
+    assert_empty @account.junk_mailbox.email_messages
+
+    # Any other folder writes no rule and needs no step-up.
+    import_eml eml_upload(raw)
+    assert_redirected_to email_account_mailbox_url(@account, @inbox)
+    assert_equal 1, @inbox.email_messages.count
+
+    reauthenticate
+    import_eml eml_upload(raw), mailbox: @account.junk_mailbox
+    assert_redirected_to email_account_mailbox_url(@account, @account.junk_mailbox)
+    assert_equal "deny", @account.sender_rules.sole.verdict
   end
 end

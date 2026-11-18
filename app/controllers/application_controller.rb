@@ -33,10 +33,14 @@ class ApplicationController < ActionController::Base
 
   # The pages an un-enrolled user still needs: both enrollment flows
   # (TOTP QR page, passkey registration - the latter lives on the user's
-  # own profile), and signing out. Everything else redirects.
+  # own profile), the step-up prompt those flows are gated behind, and
+  # signing out. Everything else redirects. Without the step-up prompt a
+  # user whose sign-in window has lapsed (ten minutes after logging in)
+  # bounces between "enroll first" and "confirm your identity first"
+  # forever and can only sign out.
   def second_factor_enrollment_surface?
     case controller_path
-    when "two_factor/totp", "two_factor/passkeys", "sessions" then true
+    when "two_factor/totp", "two_factor/passkeys", "sessions", "reauthentications" then true
     when "users"
       %w[edit update].include?(action_name) && params[:id].to_s == Current.user.id.to_s
     else

@@ -38,6 +38,16 @@ module MailAdmin
       "Permissions-Policy" => "camera=(), microphone=(), geolocation=(), usb=(), payment=()"
     )
 
+    # Active Storage is used only server-side here (Action Mailbox keeps
+    # each inbound message's raw bytes as a blob). Its stock routes sit
+    # outside ApplicationController, so with them drawn an anonymous
+    # visitor could take a CSRF token from the login page, direct-upload
+    # arbitrary files onto the volume that also holds mail and backups,
+    # and read them back from this hostname with no session. Nothing in
+    # the app links to a blob (the composer's editor has attachments off,
+    # see drafts/_composer), so the routes are simply not drawn.
+    config.active_storage.draw_routes = false
+
     # Configuration for the application, engines, and railties goes here.
     #
     # These settings can be overridden in specific environments using the files

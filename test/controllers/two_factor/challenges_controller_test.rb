@@ -129,6 +129,75 @@ class TwoFactor::ChallengesControllerTest < ActionDispatch::IntegrationTest
     assert_nil cookies[:session_id].presence, "a valid code must not sign in while throttled"
   end
 
+  # -- wrong-code lock (User::OTP_FAILURES_PER_LOCK) ---------------------------
+
+  # The audit's grind, end to end: someone holding the password fails codes
+  # to the limit, waits out the block and starts over, from a new address
+  # each round. Before the per-user lock every round bought ten more
+  # guesses; now each block is twice the last.
+  test "TOTP guessing with the password is locked per user and the lock escalates across rounds and addresses" do
+    checked = 0
+    blocks = []
+    now = Time.current
+
+    4.times do |round|
+      ip = "203.0.113.#{10 + round}"
+      travel_to now do
+        post session_path, params: { email_address: @user.email_address, password: "password" },
+                           headers: { "REMOTE_ADDR" => ip }
+        assert_redirected_to new_two_factor_challenge_path, "round #{round}: password stage"
+        8.times do
+          post totp_two_factor_challenge_path, params: { code: "000000" }, headers: { "REMOTE_ADDR" => ip }
+          checked += 1 if flash[:alert].to_s.include?("didn't work")
+        end
+        assert_match(/Authenticator codes are blocked/, flash[:alert])
+        blocks << (@user.reload.otp_locked_until - Time.current).round
+      end
+      now = @user.otp_locked_until + 1.second
+      # The shared account throttle is not what is under test here.
+      MailOnRails::AuthThrottle.delete_all
+    end
+
+    # The fifth wrong code of each round earns the block, so it is reported
+    # as blocked rather than as one more "didn't work".
+    assert_equal 4 * (User::OTP_FAILURES_PER_LOCK - 1), checked
+    assert_equal 4 * User::OTP_FAILURES_PER_LOCK, @user.otp_failed_attempts
+    assert_equal [ 300, 600, 1200, 2400 ], blocks
+  end
+
+  test "a locked user's correct code is refused, and accepted once the block lapses" do
+    start_challenge
+    User::OTP_FAILURES_PER_LOCK.times { post totp_two_factor_challenge_path, params: { code: "000000" } }
+    assert @user.reload.otp_locked?
+
+    post totp_two_factor_challenge_path, params: { code: ROTP::TOTP.new(@user.otp_secret).now }
+    assert_redirected_to new_two_factor_challenge_path
+    assert_match(/Authenticator codes are blocked/, flash[:alert])
+    assert_nil cookies[:session_id].presence
+
+    travel_to @user.otp_locked_until + 1.second do
+      MailOnRails::AuthThrottle.delete_all
+      start_challenge
+      post totp_two_factor_challenge_path, params: { code: ROTP::TOTP.new(@user.otp_secret).now }
+      assert_redirected_to root_url
+      assert cookies[:session_id].present?
+      assert_equal 0, @user.reload.otp_failed_attempts, "a successful second factor resets the count"
+    end
+  end
+
+  test "the code lock does not block passkey sign-in" do
+    client = register_passkey
+    @user.update_columns(otp_failed_attempts: 5, otp_locked_until: 1.hour.from_now)
+
+    start_challenge
+    post webauthn_options_two_factor_challenge_path, as: :json
+    post webauthn_two_factor_challenge_path, as: :json,
+         params: { credential: client.get(challenge: response.parsed_body["challenge"], user_verified: true) }
+
+    assert_response :success
+    assert cookies[:session_id].present?
+  end
+
   test "passkey assertion completes sign-in" do
     client = register_passkey
 

@@ -26,6 +26,16 @@ class PasswordsControllerTest < ActionDispatch::IntegrationTest
     assert_notice "reset instructions sent"
   end
 
+  # A NUL byte used to raise in the database driver (500); a list used to
+  # be looked up as "any of these". Neither is an address the form can post.
+  test "create with a non-scalar or NUL-bearing address answers like an unknown user" do
+    [ [ @user.email_address ], { x: @user.email_address }, "#{@user.email_address}\u0000" ].each do |value|
+      post passwords_path, params: { email_address: value }
+      assert_redirected_to new_session_path, value.inspect
+    end
+    assert_enqueued_emails 0
+  end
+
   test "edit" do
     get edit_password_path(@user.password_reset_token)
     assert_response :success

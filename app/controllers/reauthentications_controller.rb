@@ -32,12 +32,20 @@ class ReauthenticationsController < ApplicationController
 
   # Authenticator-app path.
   def totp
+    # Same per-user code lock as the sign-in challenge (one secret, one
+    # budget - User::OTP_FAILURES_PER_LOCK). The password and passkey paths
+    # stay open.
+    if Current.user.otp_locked?
+      return redirect_to new_reauthentication_path, alert: otp_locked_message(Current.user)
+    end
+
     if Current.user.verify_otp(params[:code])
       confirmed
       redirect_to reauthentication_return_to, notice: "Identity confirmed."
     else
       record_failure
-      redirect_to new_reauthentication_path, alert: "That code didn't work. Try again."
+      redirect_to new_reauthentication_path,
+                  alert: Current.user.otp_locked? ? otp_locked_message(Current.user) : "That code didn't work. Try again."
     end
   end
 
@@ -46,14 +54,16 @@ class ReauthenticationsController < ApplicationController
       allow: Current.user.webauthn_credentials.pluck(:external_id),
       user_verification: "required"
     )
-    session[:webauthn_challenge] = options.challenge
+    # Bound to this signed-in session and to step-up (see
+    # Reauthentication#take_webauthn_challenge).
+    bind_to_session(:webauthn_challenge, "purpose" => "step_up", "challenge" => options.challenge)
     render json: options
   end
 
   def webauthn
     credential = WebAuthn::Credential.from_get(params.require(:credential).to_unsafe_h)
     stored = Current.user.webauthn_credentials.find_by!(external_id: credential.id)
-    credential.verify(session.delete(:webauthn_challenge).to_s,
+    credential.verify(take_webauthn_challenge("step_up"),
       public_key: stored.public_key, sign_count: stored.sign_count, user_verification: true)
     stored.update!(sign_count: credential.sign_count)
     confirmed

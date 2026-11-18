@@ -14,9 +14,28 @@ class User < ApplicationRecord
   # is not governed by this.
   ROLES = %w[admin member].freeze
 
-  # Accept the previous/next TOTP code too - phone clocks drift.
+  # Accept the previous/next TOTP code too - phone clocks drift. That makes
+  # three codes valid at any instant instead of one, which the wrong-code
+  # lock below is what pays for: at its long-run rate of
+  # OTP_FAILURES_PER_LOCK guesses a day the odds stay around 1.5e-5 a day.
   OTP_DRIFT = 30
   OTP_ISSUER = "Mail on Rails"
+
+  # Wrong authenticator codes are counted per user, apart from the shared
+  # password budget (MailOnRails::AuthThrottle), because the guesser here
+  # already holds the password or a session cookie and the space is only
+  # 10^6: a flat "N failures, short block, start over" lets them grind it.
+  # Every OTP_FAILURES_PER_LOCK-th consecutive failure blocks code
+  # verification, and each block is twice the last - 5 min, 10 min, 20 min
+  # ... up to OTP_LOCK_MAX - so sustained guessing settles at
+  # OTP_FAILURES_PER_LOCK codes a day. Only an accepted code (or
+  # re-enrolling, or a password rotation, which cuts the guesser off) puts
+  # the count back to zero; waiting does not. Passkeys are unaffected, so
+  # an owner with one enrolled is never locked out by someone else's
+  # guessing.
+  OTP_FAILURES_PER_LOCK = 5
+  OTP_LOCK_BASE = 5.minutes
+  OTP_LOCK_MAX = 24.hours
 
   # Theme preferences, edited from the profile's Appearance card and painted
   # onto <html> by the layout. Accent names map to their light-mode swatch
@@ -67,19 +86,41 @@ class User < ApplicationRecord
   # The verify-then-burn runs under a row lock so two requests presenting the
   # same code can't both read the old otp_last_used_at and both succeed - the
   # loser re-reads the burned timestep inside the lock and is rejected.
+  #
+  # The same lock covers the failure count (see OTP_FAILURES_PER_LOCK): the
+  # block is re-read and enforced inside it, so a burst of parallel guesses
+  # is adjudicated one at a time against the budget rather than all against
+  # the count as it stood before the burst. While blocked nothing is
+  # checked - a correct code is refused too.
   def verify_otp(code)
     return false unless otp_enabled?
 
     with_lock do
+      next false if otp_locked?
+
       timestep = ROTP::TOTP.new(otp_secret, issuer: OTP_ISSUER).verify(
         code.to_s.delete(" "),
         drift_behind: OTP_DRIFT, drift_ahead: OTP_DRIFT, after: otp_last_used_at
       )
-      return false unless timestep
-
-      update!(otp_last_used_at: timestep)
-      true
+      if timestep
+        update!(otp_last_used_at: timestep, otp_failed_attempts: 0, otp_locked_until: nil)
+        true
+      else
+        record_otp_failure
+        false
+      end
     end
+  end
+
+  def otp_locked?(now: Time.current)
+    otp_locked_until.present? && otp_locked_until > now
+  end
+
+  # Forgets the failure count and any block. For the moments the secret
+  # being guessed stops existing or the guesser loses their way in:
+  # (re-)enrolling or removing the authenticator, and a password rotation.
+  def clear_otp_lock!
+    update_columns(otp_failed_attempts: 0, otp_locked_until: nil)
   end
 
   def otp_provisioning_uri(secret)
@@ -92,4 +133,17 @@ class User < ApplicationRecord
     update!(webauthn_id: WebAuthn.generate_user_id) if webauthn_id.blank?
     webauthn_id
   end
+
+  private
+    # update_columns: a counter bump is not a profile change - no validations
+    # to run and no users-index broadcast to send per wrong guess.
+    def record_otp_failure(now: Time.current)
+      failures = otp_failed_attempts + 1
+      locked_until = nil
+      if (failures % OTP_FAILURES_PER_LOCK).zero?
+        doublings = [ failures / OTP_FAILURES_PER_LOCK - 1, 30 ].min
+        locked_until = now + [ OTP_LOCK_BASE * (2**doublings), OTP_LOCK_MAX ].min
+      end
+      update_columns(otp_failed_attempts: failures, otp_locked_until: locked_until)
+    end
 end

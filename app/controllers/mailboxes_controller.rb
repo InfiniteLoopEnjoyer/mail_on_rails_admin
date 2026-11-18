@@ -11,6 +11,19 @@ class MailboxesController < ApplicationController
   # exact move a stolen session cookie would make - so it takes a fresh
   # step-up on top of the audit trail below.
   before_action :require_recent_reauthentication, only: :export
+  # Importing into Junk is a spam verdict on each message's sender - it
+  # writes a deny SenderRule (see import_one) - so it takes the same
+  # step-up SenderRulesController asks for before a rule is written by
+  # hand. Import into any other folder writes no rule and stays ungated.
+  # (A method of its own: declaring require_recent_reauthentication a second
+  # time would replace the export gate above, not add to it.)
+  before_action :require_step_up_for_junk_import, only: :import
+  # INBOX, Sent, Drafts, Trash, Junk and Quarantine are where the system
+  # itself files mail; renaming or deleting one from a web form would
+  # silently reroute delivery, autosave or spam filing. (An IMAP client can
+  # still do it - that is the protocol's contract - and the next delivery
+  # recreates what it needs.)
+  before_action :refuse_system_folder, only: %i[edit update destroy]
   rate_limit to: 30, within: 10.minutes, only: %i[create update destroy import],
              with: -> { redirect_to email_account_path(params[:email_account_id]), alert: "Try again later." }
 
@@ -103,7 +116,7 @@ class MailboxesController < ApplicationController
   def create
     @mailbox = @email_account.mailboxes.new(mailbox_params)
     if @mailbox.save
-      redirect_to email_account_path(@email_account), notice: "Folder #{@mailbox.name} created."
+      redirect_to email_account_path(@email_account), notice: "Folder #{flash_name} created."
     else
       render :new, status: :unprocessable_entity
     end
@@ -122,7 +135,7 @@ class MailboxesController < ApplicationController
 
   def destroy
     if @mailbox.destroy
-      redirect_to email_account_path(@email_account), notice: "Folder #{@mailbox.name} deleted.", status: :see_other
+      redirect_to email_account_path(@email_account), notice: "Folder #{flash_name} deleted.", status: :see_other
     else
       redirect_to email_account_mailbox_path(@email_account, @mailbox),
                   alert: @mailbox.errors.full_messages.to_sentence, status: :see_other
@@ -181,6 +194,24 @@ class MailboxesController < ApplicationController
 
   def set_mailbox
     @mailbox = @email_account.mailboxes.find(params[:id])
+  end
+
+  def require_step_up_for_junk_import
+    require_recent_reauthentication if @mailbox.junk?
+  end
+
+  def refuse_system_folder
+    return unless @mailbox.system?
+
+    redirect_to email_account_mailbox_path(@email_account, @mailbox), status: :see_other,
+                alert: "#{@mailbox.name} is a built-in folder and can't be renamed or deleted here."
+  end
+
+  # The flash rides in the session cookie (4 KB all told) and a folder name
+  # may legitimately be 1 KB, more once JSON-escaped - so the notice quotes
+  # a shortened name rather than overflow the cookie and 500.
+  def flash_name
+    @mailbox.name.truncate(80)
   end
 
   def mailbox_params

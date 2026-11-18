@@ -42,6 +42,7 @@ class UsersController < ApplicationController
     end
 
     if @user.update(user_params)
+      end_sessions_after_email_change if @user.saved_change_to_email_address?
       details = { changes: @user.previous_changes.keys - %w[updated_at] }
       if user_params.key?(:email_account_ids)
         details[:granted_accounts] = @user.email_accounts.order(:email).pluck(:email)
@@ -81,6 +82,9 @@ class UsersController < ApplicationController
 
   def generate_password
     plaintext = @user.regenerate_password!
+    # A new password cuts off whoever was guessing codes with the old one
+    # (see User::OTP_FAILURES_PER_LOCK), so the owner starts clean.
+    @user.clear_otp_lock!
     audit "user.generate_password", @user
 
     if @user == Current.user
@@ -130,6 +134,14 @@ class UsersController < ApplicationController
     else
       params.expect(user: [ :email_address ])
     end
+  end
+
+  # The address is the sign-in name, so changing it is a credential change
+  # like a new factor: sign-ins made under the old one end. Your own
+  # current session (it just passed step-up) survives; when an admin
+  # renames someone else, all of that user's sessions go.
+  def end_sessions_after_email_change
+    @user == Current.user ? end_other_sessions : @user.sessions.destroy_all
   end
 
   def demoting_last_admin?

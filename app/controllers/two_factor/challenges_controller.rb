@@ -30,14 +30,19 @@ class TwoFactor::ChallengesController < ApplicationController
       allow: @user.webauthn_credentials.pluck(:external_id),
       user_verification: "required"
     )
-    session[:webauthn_challenge] = options.challenge
+    # No Session row exists yet, so the challenge is tied to the pending
+    # user instead: a new password stage for someone else in the same
+    # browser must not inherit a challenge issued for this user (and the
+    # purpose keeps it away from the enrollment and step-up endpoints,
+    # which stash theirs under the same key).
+    session[:webauthn_challenge] = { "purpose" => "sign_in", "user_id" => @user.id, "challenge" => options.challenge }
     render json: options
   end
 
   def webauthn
     credential = WebAuthn::Credential.from_get(params.require(:credential).to_unsafe_h)
     stored = @user.webauthn_credentials.find_by!(external_id: credential.id)
-    credential.verify(session.delete(:webauthn_challenge).to_s,
+    credential.verify(take_sign_in_challenge,
       public_key: stored.public_key, sign_count: stored.sign_count, user_verification: true)
     stored.update!(sign_count: credential.sign_count)
     render json: { location: complete_sign_in }
@@ -47,11 +52,19 @@ class TwoFactor::ChallengesController < ApplicationController
   end
 
   def totp
+    # The per-user code lock (User::OTP_FAILURES_PER_LOCK): refused before
+    # anything is checked or counted, so waiting it out is the only way on.
+    # Passkey sign-in is not affected.
+    if @user.otp_locked?
+      return redirect_to new_two_factor_challenge_path, alert: otp_locked_message(@user)
+    end
+
     if @user.verify_otp(params[:code])
       redirect_to complete_sign_in
     else
       record_second_factor_failure
-      redirect_to new_two_factor_challenge_path, alert: "That code didn't work. Try again."
+      redirect_to new_two_factor_challenge_path,
+                  alert: @user.otp_locked? ? otp_locked_message(@user) : "That code didn't work. Try again."
     end
   end
 
@@ -78,6 +91,13 @@ class TwoFactor::ChallengesController < ApplicationController
       MailOnRails::AuthThrottle.record_failure(ip: request.remote_ip, email: @user.email_address)
       MailOnRails::AuthAttempt.record(ip: request.remote_ip, username: @user.email_address,
                          source: "web", outcome: "bad_credentials")
+    end
+
+    def take_sign_in_challenge
+      stash = session.delete(:webauthn_challenge)
+      return "" unless stash.is_a?(Hash) && stash["purpose"] == "sign_in" && stash["user_id"] == @user.id
+
+      stash["challenge"].to_s
     end
 
     def set_user

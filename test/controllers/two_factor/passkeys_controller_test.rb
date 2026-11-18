@@ -34,6 +34,39 @@ class TwoFactor::PasskeysControllerTest < ActionDispatch::IntegrationTest
     assert_not WebauthnCredential.exists?(passkey.id)
   end
 
+  test "registering and removing a passkey each end the user's other sessions, not this one" do
+    other = @user.sessions.create!
+    bystander = users(:two).sessions.create!
+    sign_in_as(@user)
+
+    post options_two_factor_passkeys_path, as: :json
+    credential = WebAuthn::FakeClient.new(ORIGIN).create(challenge: response.parsed_body["challenge"], user_verified: true)
+    post two_factor_passkeys_path, params: { credential: credential, nickname: "Test key" }, as: :json
+    assert_response :success
+    assert_not Session.exists?(other.id), "registering must end the user's other sessions"
+    assert Session.exists?(bystander.id), "other users are untouched"
+
+    another = @user.sessions.create!
+    delete two_factor_passkey_path(@user.webauthn_credentials.last)
+    assert_redirected_to edit_user_path(@user)
+    assert_not Session.exists?(another.id), "removing must end the user's other sessions"
+    get edit_user_path(@user)
+    assert_response :success, "the session that made the change stays signed in"
+  end
+
+  test "a failed registration ends nothing" do
+    other = @user.sessions.create!
+    sign_in_as(@user)
+
+    post options_two_factor_passkeys_path, as: :json
+    stale = WebAuthn.standard_encoder.encode(SecureRandom.random_bytes(32))
+    credential = WebAuthn::FakeClient.new(ORIGIN).create(challenge: stale, user_verified: true)
+    post two_factor_passkeys_path, params: { credential: credential, nickname: "Nope" }, as: :json
+
+    assert_response :unprocessable_entity
+    assert Session.exists?(other.id)
+  end
+
   test "removal requires recent re-authentication" do
     passkey = @user.webauthn_credentials.create!(external_id: "own", public_key: "pk", nickname: "Mine")
     sign_in_as(@user, step_up: false)

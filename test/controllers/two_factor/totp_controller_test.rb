@@ -54,6 +54,51 @@ class TwoFactor::TotpControllerTest < ActionDispatch::IntegrationTest
     assert @user.reload.otp_enabled?
   end
 
+  # A thief's resumed cookie must not outlive the owner tightening (or an
+  # attacker loosening) the account's second factor.
+  test "enabling and disabling the authenticator each end the user's other sessions, not this one" do
+    other = @user.sessions.create!
+    bystander = users(:two).sessions.create!
+    sign_in_as(@user)
+
+    get new_two_factor_totp_path
+    post two_factor_totp_path, params: { code: ROTP::TOTP.new(css_select("code").first.text).now }
+    assert @user.reload.otp_enabled?
+    assert_not Session.exists?(other.id), "enrolling must end the user's other sessions"
+    assert Session.exists?(bystander.id), "other users are untouched"
+    get edit_user_path(@user)
+    assert_response :success, "the session that made the change stays signed in"
+
+    another = @user.sessions.create!
+    delete two_factor_totp_path
+    assert_not @user.reload.otp_enabled?
+    assert_not Session.exists?(another.id), "removing the factor must end the user's other sessions"
+    get edit_user_path(@user)
+    assert_response :success
+  end
+
+  test "a failed enrollment code ends nothing" do
+    other = @user.sessions.create!
+    sign_in_as(@user)
+    get new_two_factor_totp_path
+
+    post two_factor_totp_path, params: { code: "000000" }
+
+    assert Session.exists?(other.id)
+  end
+
+  test "re-enrolling the authenticator clears a wrong-code lock on the old secret" do
+    @user.update!(otp_secret: ROTP::Base32.random)
+    @user.update_columns(otp_failed_attempts: 10, otp_locked_until: 1.hour.from_now)
+    sign_in_as(@user)
+
+    get new_two_factor_totp_path
+    post two_factor_totp_path, params: { code: ROTP::TOTP.new(css_select("code").first.text).now }
+
+    assert_not @user.reload.otp_locked?
+    assert_equal 0, @user.otp_failed_attempts
+  end
+
   test "wrong confirmation code does not enable" do
     sign_in_as(@user)
     get new_two_factor_totp_path

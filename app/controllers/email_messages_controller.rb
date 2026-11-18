@@ -8,7 +8,14 @@ class EmailMessagesController < ApplicationController
   # it takes a fresh step-up on top of the audit trail. Viewing the source
   # is the same bytes on a page instead of in a file, so it gets the same
   # gate - otherwise it would be the ungated copy of a gated download.
-  before_action :require_recent_reauthentication, only: %i[download source]
+  #
+  # "Mark as spam" / "Not spam" are gated as well: they write the sender's
+  # deny/allow SenderRule (JunkFeedback via move_to!). SenderRulesController
+  # gates writing those rules by hand - they decide what reaches the inbox -
+  # and these buttons write the same rows, so a resumed cookie proves itself
+  # here too; otherwise "Not spam" on any message in Junk is the ungated way
+  # to add an allow rule.
+  before_action :require_recent_reauthentication, only: %i[download source mark_spam unmark_spam]
   # rescan feeds the stored bytes through clamav on demand - bounded so it
   # can't be scripted into a scanner-load amplifier.
   rate_limit to: 10, within: 3.minutes, only: :rescan,

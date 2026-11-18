@@ -23,19 +23,23 @@ class TwoFactor::PasskeysController < ApplicationController
       # password at step-up.
       authenticator_selection: { user_verification: "required" }
     )
-    session[:webauthn_challenge] = options.challenge
+    # Bound to this signed-in session and to enrollment: the challenge is
+    # only redeemable by the identity it was issued to, and not at the
+    # step-up or sign-in endpoints that keep theirs under the same key.
+    bind_to_session(:webauthn_challenge, "purpose" => "enroll", "challenge" => options.challenge)
     render json: options
   end
 
   def create
     credential = WebAuthn::Credential.from_create(params.require(:credential).to_unsafe_h)
-    credential.verify(session.delete(:webauthn_challenge).to_s, user_verification: true)
+    credential.verify(take_webauthn_challenge("enroll"), user_verification: true)
     Current.user.webauthn_credentials.create!(
       external_id: credential.id,
       public_key: credential.public_key,
       sign_count: credential.sign_count,
       nickname: params[:nickname].presence || "Passkey"
     )
+    end_other_sessions
     flash[:notice] = "Passkey registered."
     render json: { location: edit_user_url(Current.user) }
   rescue WebAuthn::Error, ActiveRecord::RecordInvalid, ActionController::ParameterMissing
@@ -44,6 +48,7 @@ class TwoFactor::PasskeysController < ApplicationController
 
   def destroy
     Current.user.webauthn_credentials.find(params[:id]).destroy!
+    end_other_sessions
     redirect_to edit_user_path(Current.user), notice: "Passkey removed."
   end
 end

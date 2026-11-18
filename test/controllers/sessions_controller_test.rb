@@ -130,6 +130,29 @@ class SessionsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_path
   end
 
+  # email_address[]= used to reach the finder as "no arguments" and raise
+  # (500). Anything that is not a plain string is a wrong guess like any
+  # other: same redirect, same message, counted against the address.
+  test "non-scalar or NUL-bearing credentials get the ordinary failed-login response" do
+    [
+      { email_address: [ "one@example.com" ], password: "password" },
+      { email_address: { x: "one@example.com" }, password: "password" },
+      { email_address: "one@example.com", password: [ "password" ] },
+      { email_address: "one@example.com", password: { x: "password" } },
+      { email_address: "one\u0000@example.com", password: "password" },
+      { email_address: "one@example.com", password: "pass\u0000word" },
+      { password: "password" },
+      {}
+    ].each do |params|
+      assert_difference -> { MailOnRails::AuthAttempt.where(source: "web").sum(:attempt_count) }, 1, params.inspect do
+        post session_path, params: params
+      end
+      assert_redirected_to new_session_path, params.inspect
+      assert_equal "Try another email address or password.", flash[:alert]
+      assert_nil cookies[:session_id].presence
+    end
+  end
+
   test "destroy" do
     sign_in_as(User.take)
 

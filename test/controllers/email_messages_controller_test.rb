@@ -60,6 +60,41 @@ class EmailMessagesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "ham", enqueued_jobs.last["arguments"].last
   end
 
+  # Both buttons write the sender's SenderRule, which SenderRulesController
+  # only lets a freshly verified session do. Ungated, "Not spam" on any
+  # message in Junk was the way around that gate to an allow rule.
+  test "mark_spam and unmark_spam need a fresh step-up, like writing the rule by hand" do
+    sign_in_as users(:one), step_up: false
+    inbox_message = MailOnRails::EmailMessage.deliver_raw(@account.inbox, RAW)
+    junk = @account.junk_mailbox
+    junk_message = MailOnRails::EmailMessage.deliver_raw(junk, RAW)
+
+    assert_no_enqueued_jobs only: MailOnRails::LearnSpamJob do
+      post mark_spam_email_account_mailbox_email_message_url(@account, @account.inbox, inbox_message)
+      assert_redirected_to new_reauthentication_path
+      post unmark_spam_email_account_mailbox_email_message_url(@account, junk, junk_message)
+      assert_redirected_to new_reauthentication_path
+    end
+    assert_empty @account.sender_rules
+    assert_equal [ 1, 1 ], [ @account.inbox.email_messages.count, junk.email_messages.count ], "nothing moved"
+
+    reauthenticate
+    post unmark_spam_email_account_mailbox_email_message_url(@account, junk, junk_message)
+    assert_redirected_to email_account_mailbox_url(@account, junk)
+    assert_equal "allow", @account.sender_rules.sole.verdict
+  end
+
+  # Moving to Trash writes no rule and stays ordinary mail usage.
+  test "deleting a message needs no step-up" do
+    sign_in_as users(:one), step_up: false
+    message = MailOnRails::EmailMessage.deliver_raw(@account.inbox, RAW)
+
+    delete email_account_mailbox_email_message_url(@account, @account.inbox, message)
+
+    assert_redirected_to email_account_mailbox_url(@account, @account.inbox)
+    assert_equal 1, @account.trash_mailbox.email_messages.count
+  end
+
   test "deleting from Junk is not a verdict" do
     junk = @account.junk_mailbox
     message = MailOnRails::EmailMessage.deliver_raw(junk, RAW)

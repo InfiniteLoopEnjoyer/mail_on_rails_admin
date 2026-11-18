@@ -45,6 +45,51 @@ class RequireTwoFactorTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # Enrollment is step-up gated and signing in opens that window for ten
+  # minutes. Before the step-up prompt was part of the enrollment surface,
+  # a user who took longer bounced forever between "enroll first" (the
+  # mandate, guarding the prompt) and "confirm your identity first" (the
+  # gate, guarding enrollment), with sign-out the only way on.
+  test "an un-enrolled user whose sign-in window lapsed can still confirm and enroll" do
+    user = users(:member)
+    with_require_2fa do
+      post session_path, params: { email_address: user.email_address, password: "password" }
+
+      travel 11.minutes do
+        get root_path
+        assert_redirected_to new_two_factor_totp_path
+        follow_redirect!
+        assert_redirected_to new_reauthentication_path
+        follow_redirect!
+        assert_response :success, "the step-up prompt must render, not redirect back to enrollment"
+
+        post reauthentication_path, params: { password: "password" }
+        assert_response :redirect
+        assert_no_match(/reauthentication/, response.location)
+
+        get new_two_factor_totp_path
+        assert_response :success
+        secret = css_select("code").first.text
+        post two_factor_totp_path, params: { code: ROTP::TOTP.new(secret).now }
+        assert user.reload.otp_enabled?
+
+        get root_path
+        assert_response :success
+      end
+    end
+  end
+
+  test "the step-up prompt is the only addition - the rest stays closed to an un-enrolled user" do
+    sign_in_as users(:one), step_up: false
+    with_require_2fa do
+      get new_reauthentication_path
+      assert_response :success
+
+      get settings_path
+      assert_redirected_to new_two_factor_totp_path
+    end
+  end
+
   test "a user with a second factor browses normally" do
     user = users(:one)
     user.update!(otp_secret: ROTP::Base32.random)

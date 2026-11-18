@@ -103,6 +103,60 @@ class UsersControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_url
   end
 
+  # The address is the sign-in name: changing it is a credential change.
+  test "changing your own email address ends your other sessions, not this one" do
+    other = @user.sessions.create!
+    bystander = users(:two).sessions.create!
+
+    patch user_url(@user), params: { user: { email_address: "renamed@example.com" } }
+
+    assert_equal "renamed@example.com", @user.reload.email_address
+    assert_not Session.exists?(other.id)
+    assert Session.exists?(bystander.id)
+    get users_url
+    assert_response :success, "the session that made the change stays signed in"
+  end
+
+  test "an admin changing another user's email address ends all of that user's sessions" do
+    theirs = users(:two).sessions.create!
+    mine = @user.sessions.create!
+
+    patch user_url(users(:two)), params: { user: { email_address: "two-renamed@example.com" } }
+
+    assert_not Session.exists?(theirs.id)
+    assert Session.exists?(mine.id), "the admin's own sessions are not the renamed user's"
+  end
+
+  test "an update that leaves the email address alone ends no sessions" do
+    other = @user.sessions.create!
+    theirs = users(:member).sessions.create!
+
+    patch user_url(@user), params: { user: { email_address: @user.email_address } }
+    patch user_url(users(:member)), params: { user: { email_address: users(:member).email_address, role: "admin" } }
+
+    assert Session.exists?(other.id)
+    assert Session.exists?(theirs.id)
+  end
+
+  test "a rejected email change ends no sessions" do
+    other = @user.sessions.create!
+
+    patch user_url(@user), params: { user: { email_address: users(:two).email_address } }
+
+    assert_response :unprocessable_entity
+    assert Session.exists?(other.id)
+  end
+
+  test "rotating a password clears a wrong-code lock" do
+    users(:two).update_columns(otp_failed_attempts: 10, otp_locked_until: 1.hour.from_now)
+
+    post generate_password_user_url(users(:two)), as: :turbo_stream
+
+    assert_response :success
+    assert_not users(:two).reload.otp_locked?
+    assert_equal 0, users(:two).otp_failed_attempts
+  end
+
   test "generate_password requires recent re-authentication" do
     # A real logout clears the step-up window; sign back in as a resumed
     # cookie (no fresh proof) and the rotation must be gated.

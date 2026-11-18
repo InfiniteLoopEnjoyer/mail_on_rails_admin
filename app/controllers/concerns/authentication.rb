@@ -106,11 +106,28 @@ module Authentication
       }
     end
 
+    # A changed credential (a second factor enrolled or removed, a new
+    # sign-in address) must not leave older sign-ins standing: if one of
+    # them is a thief's resumed cookie, the owner tightening their account
+    # would otherwise change nothing for it. The session making the change
+    # just passed step-up and stays.
+    def end_other_sessions(user = Current.user)
+      user.sessions.where.not(id: Current.session.id).destroy_all
+    end
+
+    # Shown instead of checking a code while User#otp_locked?.
+    def otp_locked_message(user)
+      wait = helpers.distance_of_time_in_words(Time.current, user.otp_locked_until)
+      "Too many wrong codes. Authenticator codes are blocked for #{wait}."
+    end
+
     def terminate_session
       Current.session.destroy
       cookies.delete(:session_id)
       # Signing out ends step-up too: the grace window must not survive to
-      # authorize a later resumed session.
-      session.delete(:reauthenticated_until)
+      # authorize a later resumed session. (The stamp is bound to the
+      # Session row just destroyed - see Reauthentication - so a replayed
+      # copy of this cookie is dead as well.)
+      session.delete(:reauthenticated)
     end
 end

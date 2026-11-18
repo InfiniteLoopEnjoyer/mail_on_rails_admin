@@ -71,6 +71,28 @@ class ReauthenticationsControllerTest < ActionDispatch::IntegrationTest
     assert_not WebauthnCredential.exists?(passkey.id)
   end
 
+  # The step-up TOTP form guesses at the same secret as the sign-in
+  # challenge, so it spends the same per-user budget.
+  test "wrong step-up codes lock the authenticator path; the password path still opens the window" do
+    @user.update!(otp_secret: ROTP::Base32.random)
+    sign_in_as(@user, step_up: false)
+
+    User::OTP_FAILURES_PER_LOCK.times { post totp_reauthentication_path, params: { code: "000000" } }
+    assert_match(/Authenticator codes are blocked/, flash[:alert])
+    assert @user.reload.otp_locked?
+
+    post totp_reauthentication_path, params: { code: ROTP::TOTP.new(@user.otp_secret).now }
+    assert_redirected_to new_reauthentication_path
+    assert_match(/Authenticator codes are blocked/, flash[:alert])
+    delete two_factor_totp_path
+    assert_redirected_to new_reauthentication_path, "a locked-out code must not have opened the window"
+
+    MailOnRails::AuthThrottle.delete_all
+    post reauthentication_path, params: { password: "password" }
+    delete two_factor_totp_path
+    assert_redirected_to edit_user_path(@user)
+  end
+
   test "repeated failures are throttled" do
     sign_in_as(@user)
 

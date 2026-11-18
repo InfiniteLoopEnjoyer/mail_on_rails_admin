@@ -24,9 +24,16 @@ module Reauthentication
 
   private
 
+  # The window is kept in the Rack session, but identity is a different
+  # cookie (the signed session_id). A bare deadline would therefore
+  # authorize whichever identity it is presented next to: someone holding a
+  # stolen session_id cookie could sign in as themselves, keep their own
+  # freshly stamped Rack session and swap in the stolen id. So the stamp
+  # names the Session row and user that earned it, and only counts for
+  # exactly that pair.
   def reauthenticated_recently?
-    deadline = session[:reauthenticated_until].to_i
-    deadline.positive? && Time.current.to_i < deadline
+    stamp = session_bound(:reauthenticated)
+    stamp.present? && Time.current.to_i < stamp["until"].to_i
   end
 
   # before_action for the gated actions. Non-GET actions (button_to DELETE,
@@ -47,7 +54,38 @@ module Reauthentication
   end
 
   def mark_reauthenticated!
-    session[:reauthenticated_until] = REAUTHENTICATION_GRACE.from_now.to_i
+    bind_to_session(:reauthenticated, "until" => REAUTHENTICATION_GRACE.from_now.to_i)
+  end
+
+  # Rack-session state that belongs to one signed-in identity (the step-up
+  # stamp, a pending TOTP secret, a WebAuthn challenge) is stored together
+  # with the Session row id and user id it was created under, and read back
+  # only while both still match Current.session - see
+  # reauthenticated_recently? for the cookie transplant this stops. A value
+  # written under another identity reads as absent.
+  def bind_to_session(key, value)
+    session[key] = value.merge("session_id" => Current.session.id, "user_id" => Current.session.user_id)
+  end
+
+  def session_bound(key)
+    value = session[key]
+    return nil unless value.is_a?(Hash) && Current.session
+    return nil unless value["session_id"] == Current.session.id && value["user_id"] == Current.session.user_id
+
+    value
+  end
+
+  # Read-once variant: the key is gone afterwards whether or not it matched.
+  def take_session_bound(key)
+    session_bound(key).tap { session.delete(key) }
+  end
+
+  # The WebAuthn challenge issued to this session for +purpose+, consumed.
+  # "" when there is none (or it was issued to another identity, or for
+  # another ceremony), which no assertion can verify against.
+  def take_webauthn_challenge(purpose)
+    stash = take_session_bound(:webauthn_challenge)
+    stash && stash["purpose"] == purpose ? stash["challenge"].to_s : ""
   end
 
   # Same-origin only (url_from rejects other hosts and protocol-relative

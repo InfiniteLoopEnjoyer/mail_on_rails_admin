@@ -13,7 +13,12 @@ class PasswordsController < ApplicationController
   end
 
   def create
-    if user = User.find_by(email_address: params[:email_address])
+    # One address, as the form posts it. Anything else a client can make of
+    # the name (a list, a hash, a NUL byte - the last raised in the database
+    # driver) is an address nobody has: same answer, no mail.
+    email_address = params[:email_address]
+    if email_address.is_a?(String) && !email_address.include?("\0") &&
+       (user = User.find_by(email_address: email_address))
       PasswordsMailer.reset(user).deliver_later
     end
 
@@ -28,6 +33,7 @@ class PasswordsController < ApplicationController
   # fallback must render, not redirect back to the now-dead token URL.
   def update
     @generated_password = @user.regenerate_password!
+    @user.clear_otp_lock!
     @user.sessions.destroy_all
     respond_to do |format|
       format.turbo_stream do

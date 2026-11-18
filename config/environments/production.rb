@@ -37,6 +37,11 @@ Rails.application.configure do
   # Skip http-to-https redirect for the default health check endpoint.
   # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
 
+  # No X-Runtime response header on the public host: per-request server
+  # timing is a free side channel (and a fingerprint) for anyone probing
+  # the login and reset forms. Request timing is still in the log.
+  config.middleware.delete Rack::Runtime
+
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
   config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)

@@ -15,21 +15,26 @@ class TwoFactor::TotpController < ApplicationController
   before_action :require_recent_reauthentication, only: %i[new create destroy]
 
   def new
-    session[:pending_totp_secret] ||= ROTP::Base32.random
-    @secret = session[:pending_totp_secret]
+    @secret = pending_secret || ROTP::Base32.random
+    # Bound to this signed-in session (Reauthentication#bind_to_session):
+    # a candidate secret minted under one identity must not be confirmable
+    # under another by swapping the session_id cookie next to it.
+    bind_to_session(:pending_totp, "secret" => @secret)
     uri = Current.user.otp_provisioning_uri(@secret)
     @qr_svg = RQRCode::QRCode.new(uri).as_svg(module_size: 4, viewbox: true, use_path: true)
   end
 
   def create
-    secret = session[:pending_totp_secret]
+    secret = pending_secret
     timestep = secret && ROTP::TOTP.new(secret).verify(
       params[:code].to_s.delete(" "),
       drift_behind: User::OTP_DRIFT, drift_ahead: User::OTP_DRIFT
     )
     if timestep
       Current.user.update!(otp_secret: secret, otp_last_used_at: timestep)
-      session.delete(:pending_totp_secret)
+      Current.user.clear_otp_lock!
+      session.delete(:pending_totp)
+      end_other_sessions
       redirect_to edit_user_path(Current.user), notice: "Authenticator app enabled."
     else
       redirect_to new_two_factor_totp_path, alert: "That code didn't match. Scan the QR code and try again."
@@ -38,6 +43,13 @@ class TwoFactor::TotpController < ApplicationController
 
   def destroy
     Current.user.update!(otp_secret: nil, otp_last_used_at: nil)
+    Current.user.clear_otp_lock!
+    end_other_sessions
     redirect_to edit_user_path(Current.user), notice: "Authenticator app disabled."
   end
+
+  private
+    def pending_secret
+      session_bound(:pending_totp)&.dig("secret")
+    end
 end

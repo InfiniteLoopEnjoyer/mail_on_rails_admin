@@ -2,7 +2,9 @@
 # and the add form live on the account page, so both actions land back
 # there; a failed create carries the reason over in flash. Members manage
 # the rules of accounts they were granted - the same people who can
-# already click "Mark as spam", which writes these rules automatically.
+# already click "Mark as spam", which writes these rules automatically
+# (and is step-up gated for the same reason these actions are - see
+# EmailMessagesController and MailboxesController#import into Junk).
 class SenderRulesController < ApplicationController
   allow_member_access
   before_action :set_email_account
