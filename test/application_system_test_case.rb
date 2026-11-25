@@ -185,3 +185,23 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
     assert_no_current_path new_session_path, wait: 5
   end
 end
+
+# Capybara 3.40.0 ends every browser reset by clearing storage for the
+# origin "*". Chrome 158 rejects that ("* is not a valid URL"), so every
+# test errors in its teardown (teamcapybara/capybara#2865; no release
+# carries a fix yet). Do the same clear without the wildcard: every cookie,
+# then the remaining storage types for the app server's origin - the only
+# origin these tests visit. Delete this once Capybara ships the fix.
+module ChromeResetWithoutWildcardOrigin
+  private
+
+  def execute_cdp(cmd, params = {})
+    return super unless cmd == "Storage.clearDataForOrigin" && params[:origin] == "*"
+
+    super("Network.clearBrowserCookies")
+    types = params[:storageTypes].to_s.split(",") - [ "cookies" ]
+    origin = Capybara.current_session.server&.base_url
+    super(cmd, origin: origin, storageTypes: types.join(",")) if origin && types.any?
+  end
+end
+Capybara::Selenium::Driver::ChromeDriver.prepend(ChromeResetWithoutWildcardOrigin)
