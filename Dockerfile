@@ -10,7 +10,7 @@
 # Digest-pinned so builds can't silently pick up whatever the tag points at;
 # Dependabot (docker ecosystem) PRs tag and digest bumps. Keep the version in
 # sync with .ruby-version.
-FROM docker.io/library/ruby:4.0.9-slim@sha256:d8cb2c0714bdaba0f318af897a01d2dbde3cfa8e62d47e99cea55feb13c0e90d AS base
+FROM docker.io/library/ruby:4.0.10-slim@sha256:67fb5dbef860bb2205a3c69799f7f1c4f5b01c943ae089de436bc266ea8c102e AS base
 
 # Rails app lives here
 WORKDIR /rails
@@ -68,8 +68,8 @@ FROM base
 # trust anchor - any recursive upstream works, untrusted.)
 
 # The bundle carries its own json (2.21.2) and resolv (0.8.1) gems; remove
-# the base image's stale default copies (json 2.18.0, CVE-2026-33210;
-# resolv 0.7.2, superseded) - spec AND stdlib files, since a plain
+# the base image's older default copies (json 2.18.3, resolv 0.7.2 - both
+# superseded) - spec AND stdlib files, since a plain
 # `require` outside bundler loads the stdlib file straight off $LOAD_PATH
 # and would silently get the old version. (resolv-[0-9]* so the separate
 # resolv-replace default gem is left alone.)

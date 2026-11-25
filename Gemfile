@@ -71,8 +71,8 @@ gem "cloudflare"
 # DMARC, blocklist and reverse-DNS lookups are driven by what a remote
 # sender supplies - so its fixes should arrive with `bundle update`, not
 # wait for a base-image bump. The floor is the CVE-2026-80212 fix
-# (uncontrolled memory growth from crafted answers); ruby 4.0.9's default
-# gem is now 0.7.2 as well. The Dockerfile removes the image's copy so
+# (uncontrolled memory growth from crafted answers); ruby 4.0.10's default
+# gem is 0.7.2 as well. The Dockerfile removes the image's copy so
 # the bundled one is the only resolv in the container.
 gem "resolv", ">= 0.7.2"
 
